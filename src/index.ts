@@ -29,7 +29,9 @@ type UiConfig = {
 
 type ElementOverride = {
   selector: string;
+  textChanged?: boolean;
   text?: string;
+  placeholderChanged?: boolean;
   placeholder?: string;
   styleKeys: ElementStyleKey[];
   styles: Partial<Record<ElementStyleKey, string>>;
@@ -755,10 +757,12 @@ function sanitizeEditorOverrides(value: unknown): ElementOverride[] {
       styleKeys,
       styles: sanitizeElementStyles(raw.styles, styleKeys)
     };
-    if (typeof raw.text === "string") {
+    if (raw.textChanged === true && typeof raw.text === "string") {
+      override.textChanged = true;
       override.text = cleanText(raw.text, 500);
     }
-    if (typeof raw.placeholder === "string") {
+    if (raw.placeholderChanged === true && typeof raw.placeholder === "string") {
+      override.placeholderChanged = true;
       override.placeholder = cleanText(raw.placeholder, 160);
     }
     overrides.push(override);

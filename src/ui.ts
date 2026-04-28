@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260428-editor-safe-overrides";
+const ASSET_VERSION = "20260428-editor-explicit-fields";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -1112,7 +1112,7 @@ export const appScript = String.raw`
           ? '<button class="danger-button" data-action="editor-stop">' + icon("back") + '<span>停止</span></button>'
           : '<button class="primary-button" data-action="editor-start">' + icon("plus") + '<span>开始</span></button>') +
         '<button class="ghost-button" data-action="admin">' + icon("shield") + '<span>后台</span></button>' +
-        '<button class="ghost-button" data-action="editor-clear-overrides">清空样式</button>' +
+        '<button class="ghost-button" data-action="editor-clear-overrides">清空覆盖</button>' +
         '<button class="plain-button" data-action="editor-exit">退出编辑</button>' +
       '</div>' +
     '</section>';
@@ -1149,10 +1149,10 @@ export const appScript = String.raw`
     }
     nodes.forEach(function (node) {
       if (isEditorUi(node)) return;
-      if (typeof override.text === "string" && canEditText(node)) {
+      if (override.textChanged === true && typeof override.text === "string" && canEditText(node)) {
         node.textContent = override.text;
       }
-      if (typeof override.placeholder === "string" && "placeholder" in node) {
+      if (override.placeholderChanged === true && typeof override.placeholder === "string" && "placeholder" in node) {
         node.setAttribute("placeholder", override.placeholder);
       }
       applyElementStyles(node, override.styles || {}, override.styleKeys || Object.keys(override.styles || {}));
@@ -1576,8 +1576,8 @@ export const appScript = String.raw`
     beginEditorPreview(element);
     var textNow = canEditText(element) ? String(element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500) : "";
     var placeholderNow = ("placeholder" in element) ? element.getAttribute("placeholder") || "" : "";
-    var textValue = typeof existing?.text === "string" ? existing.text : "";
-    var placeholderValue = typeof existing?.placeholder === "string" ? existing.placeholder : "";
+    var textValue = existing?.textChanged === true && typeof existing?.text === "string" ? existing.text : "";
+    var placeholderValue = existing?.placeholderChanged === true && typeof existing?.placeholder === "string" ? existing.placeholder : "";
     var supportsPlaceholder = "placeholder" in element;
     var textField = canEditText(element)
       ? '<div class="field"><label>文字</label><textarea name="text" maxlength="500" placeholder="' + escAttr(textNow || "留空则保持原文字") + '">' + esc(textValue) + '</textarea><span class="field-hint">留空不改文字。</span></div>'
@@ -1777,8 +1777,14 @@ export const appScript = String.raw`
     };
     var text = String(data.get("text") || "").trim().slice(0, 500);
     var placeholder = String(data.get("placeholder") || "").trim().slice(0, 160);
-    if (form.getAttribute("data-can-text") === "true" && text) override.text = text;
-    if (data.has("placeholder") && placeholder) override.placeholder = placeholder;
+    if (form.getAttribute("data-can-text") === "true" && text) {
+      override.textChanged = true;
+      override.text = text;
+    }
+    if (data.has("placeholder") && placeholder) {
+      override.placeholderChanged = true;
+      override.placeholder = placeholder;
+    }
     return override;
   }
 
@@ -1857,8 +1863,8 @@ export const appScript = String.raw`
   function hasOverrideChanges(override) {
     return Boolean(
       Object.keys(override.styles || {}).length ||
-      typeof override.text === "string" ||
-      typeof override.placeholder === "string"
+      override.textChanged === true ||
+      override.placeholderChanged === true
     );
   }
 
