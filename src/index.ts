@@ -765,6 +765,9 @@ function sanitizeEditorOverrides(value: unknown): ElementOverride[] {
       override.placeholderChanged = true;
       override.placeholder = cleanText(raw.placeholder, 160);
     }
+    if (!Object.keys(override.styles).length && !override.textChanged && !override.placeholderChanged) {
+      continue;
+    }
     overrides.push(override);
   }
   return overrides;
