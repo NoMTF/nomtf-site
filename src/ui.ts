@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260428-global-editor";
+const ASSET_VERSION = "20260428-editor-safe-overrides";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -733,6 +733,11 @@ a { color: inherit; }
   font-size: 12px;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .searchbar.is-editor-selectable {
   cursor: crosshair;
   outline: 2px dashed var(--pink-strong);
@@ -909,7 +914,8 @@ export const appScript = String.raw`
       active: false,
       selected: "",
       element: null,
-      hover: null
+      hover: null,
+      preview: null
     }
   };
 
@@ -1106,6 +1112,7 @@ export const appScript = String.raw`
           ? '<button class="danger-button" data-action="editor-stop">' + icon("back") + '<span>停止</span></button>'
           : '<button class="primary-button" data-action="editor-start">' + icon("plus") + '<span>开始</span></button>') +
         '<button class="ghost-button" data-action="admin">' + icon("shield") + '<span>后台</span></button>' +
+        '<button class="ghost-button" data-action="editor-clear-overrides">清空样式</button>' +
         '<button class="plain-button" data-action="editor-exit">退出编辑</button>' +
       '</div>' +
     '</section>';
@@ -1148,11 +1155,11 @@ export const appScript = String.raw`
       if (typeof override.placeholder === "string" && "placeholder" in node) {
         node.setAttribute("placeholder", override.placeholder);
       }
-      applyElementStyles(node, override.styles || {});
+      applyElementStyles(node, override.styles || {}, override.styleKeys || Object.keys(override.styles || {}));
     });
   }
 
-  function applyElementStyles(node, styles) {
+  function applyElementStyles(node, styles, keys) {
     var map = {
       width: "width",
       height: "height",
@@ -1163,7 +1170,7 @@ export const appScript = String.raw`
       backgroundColor: "backgroundColor",
       borderRadius: "borderRadius"
     };
-    Object.keys(map).forEach(function (key) {
+    (keys || Object.keys(styles || {})).forEach(function (key) {
       if (styles[key]) node.style[map[key]] = styles[key];
     });
   }
@@ -1439,8 +1446,17 @@ export const appScript = String.raw`
       state.editor.active = false;
       state.editor.selected = "";
       clearEditorHover();
+      restoreEditorPreview();
       renderHeader();
       syncEditorChrome();
+      return;
+    }
+    if (action === "editor-clear-overrides") {
+      await clearAllEditorOverrides();
+      return;
+    }
+    if (action === "element-reset") {
+      await resetSelectedElementUi();
       return;
     }
     if (action === "logout") await logout();
@@ -1465,7 +1481,10 @@ export const appScript = String.raw`
       await route();
     }
     if (action === "like") await likePost(target.getAttribute("data-id"));
-    if (action === "close-modal") closeModal();
+    if (action === "close-modal") {
+      restoreEditorPreview();
+      closeModal();
+    }
     if (action === "accept-terms") await acceptTerms();
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
     if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
@@ -1523,7 +1542,7 @@ export const appScript = String.raw`
     if (special && !isEditorUi(special) && isVisibleElement(special)) return special;
     var node = raw.nodeType === 1 ? raw : raw.parentElement;
     if (!node || !node.closest) return null;
-    var target = node.closest("button,a,input,textarea,select,label,h1,h2,h3,p,img,article,section,aside,form,div,span");
+    var target = node.closest('[data-action],button,a,input,textarea,select,label,img,h1,h2,h3,h4,h5,h6,p,li,ul,ol,nav,header,main,footer,article,section,aside,form,figure,figcaption,table,thead,tbody,tr,th,td,blockquote,pre,code,small,strong,em,div,span') || node.closest("#site-header *, #app *");
     if (!target || isEditorUi(target) || target.id === "app" || target.id === "site-header") return null;
     return isVisibleElement(target) ? target : null;
   }
@@ -1554,14 +1573,17 @@ export const appScript = String.raw`
     var computed = getComputedStyle(element);
     var rect = element.getBoundingClientRect();
     var styles = existing && existing.styles ? existing.styles : {};
-    var textValue = typeof existing?.text === "string" ? existing.text : (canEditText(element) ? String(element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500) : "");
-    var placeholderValue = typeof existing?.placeholder === "string" ? existing.placeholder : (("placeholder" in element) ? element.getAttribute("placeholder") || "" : "");
+    beginEditorPreview(element);
+    var textNow = canEditText(element) ? String(element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500) : "";
+    var placeholderNow = ("placeholder" in element) ? element.getAttribute("placeholder") || "" : "";
+    var textValue = typeof existing?.text === "string" ? existing.text : "";
+    var placeholderValue = typeof existing?.placeholder === "string" ? existing.placeholder : "";
     var supportsPlaceholder = "placeholder" in element;
     var textField = canEditText(element)
-      ? '<div class="field"><label>文字</label><textarea name="text" maxlength="500">' + esc(textValue) + '</textarea></div>'
+      ? '<div class="field"><label>文字</label><textarea name="text" maxlength="500" placeholder="' + escAttr(textNow || "留空则保持原文字") + '">' + esc(textValue) + '</textarea><span class="field-hint">留空不改文字。</span></div>'
       : "";
     var placeholderField = supportsPlaceholder
-      ? '<div class="field"><label>placeholder</label><input name="placeholder" maxlength="160" value="' + escAttr(placeholderValue) + '"></div>'
+      ? '<div class="field"><label>placeholder</label><input name="placeholder" maxlength="160" placeholder="' + escAttr(placeholderNow || "留空则保持原提示") + '" value="' + escAttr(placeholderValue) + '"><span class="field-hint">留空不改提示文字。</span></div>'
       : "";
     showModal(
       '<div class="modal large">' +
@@ -1569,25 +1591,26 @@ export const appScript = String.raw`
         '<div class="modal-body">' +
           '<form id="ui-element-form" class="form-grid" data-can-text="' + (canEditText(element) ? "true" : "false") + '">' +
             '<div class="field"><label>选择器</label><input name="selector" readonly value="' + escAttr(selector) + '"></div>' +
+            '<p class="field-hint">默认不覆盖原样式。只填写你要改的项目，留空就继续沿用网站原来的 CSS。</p>' +
             '<div class="two-col">' + textField + placeholderField + '</div>' +
             '<div class="two-col">' +
-              numberField("宽度", "widthPx", cssPxToNumber(styles.width, rect.width)) +
-              numberField("高度", "heightPx", cssPxToNumber(styles.height, rect.height)) +
+              numberField("宽度", "widthPx", styleValue(styles, "width"), cssPxToNumber("", rect.width)) +
+              numberField("高度", "heightPx", styleValue(styles, "height"), cssPxToNumber("", rect.height)) +
             '</div>' +
             '<div class="two-col">' +
-              numberField("内边距", "paddingPx", cssPxToNumber(styles.padding, computed.paddingTop)) +
-              numberField("外边距", "marginPx", cssPxToNumber(styles.margin, computed.marginTop)) +
+              numberField("内边距", "paddingPx", styleValue(styles, "padding"), cssPxToNumber("", computed.paddingTop)) +
+              numberField("外边距", "marginPx", styleValue(styles, "margin"), cssPxToNumber("", computed.marginTop)) +
             '</div>' +
             '<div class="two-col">' +
-              numberField("字号", "fontSizePx", cssPxToNumber(styles.fontSize, computed.fontSize)) +
-              numberField("圆角", "borderRadiusPx", cssPxToNumber(styles.borderRadius, computed.borderTopLeftRadius)) +
+              numberField("字号", "fontSizePx", styleValue(styles, "fontSize"), cssPxToNumber("", computed.fontSize)) +
+              numberField("圆角", "borderRadiusPx", styleValue(styles, "borderRadius"), cssPxToNumber("", computed.borderTopLeftRadius)) +
             '</div>' +
             '<div class="two-col">' +
-              colorField("文字色", "color", styles.color || rgbToHex(computed.color)) +
-              colorField("背景色", "backgroundColor", styles.backgroundColor || rgbToHex(computed.backgroundColor)) +
+              colorField("文字色", "color", styleValue(styles, "color"), cssColorHint(computed.color)) +
+              colorField("背景色", "backgroundColor", styleValue(styles, "backgroundColor"), cssColorHint(computed.backgroundColor)) +
             '</div>' +
             '<div class="field"><label>生成的 CSS</label><textarea class="editor-code" name="cssSnippet" readonly></textarea></div>' +
-            '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
+            '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存</span></button><button class="ghost-button" type="button" data-action="element-reset">重置此元素</button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
           '</form>' +
         '</div>' +
       '</div>'
@@ -1595,13 +1618,56 @@ export const appScript = String.raw`
     updateElementCssSnippet(document.getElementById("ui-element-form"));
   }
 
-  function numberField(label, name, value) {
-    var number = Number(value);
-    return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="number" min="0" max="1600" step="1" value="' + (Number.isFinite(number) ? escAttr(String(Math.round(number))) : "") + '"></div>';
+  function numberField(label, name, value, current) {
+    var number = parseFloat(String(value || ""));
+    return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="number" min="0" max="1600" step="1" placeholder="当前约 ' + escAttr(String(Math.round(Number(current || 0)))) + 'px" value="' + (Number.isFinite(number) ? escAttr(String(Math.round(number))) : "") + '"><span class="field-hint">留空保持原值。</span></div>';
   }
 
-  function colorField(label, name, value) {
-    return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="color" value="' + escAttr(value || "#ffffff") + '"></div>';
+  function colorField(label, name, value, placeholder) {
+    return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="text" placeholder="' + escAttr(placeholder || "#75c7ff / transparent") + '" value="' + escAttr(value || "") + '"><span class="field-hint">支持 #RRGGBB、transparent、inherit、unset，留空保持原色。</span></div>';
+  }
+
+  function styleValue(styles, key) {
+    return styles && typeof styles[key] === "string" ? styles[key] : "";
+  }
+
+  function cssColorHint(value) {
+    value = String(value || "").trim();
+    if (!value || value === "transparent" || value === "rgba(0, 0, 0, 0)") return "当前为透明/继承";
+    return "当前约 " + (rgbToHex(value) || value);
+  }
+
+  function beginEditorPreview(element) {
+    state.editor.preview = {
+      element: element,
+      styles: captureInlineStyles(element),
+      text: canEditText(element) ? element.textContent : null,
+      placeholder: "placeholder" in element ? element.getAttribute("placeholder") : null
+    };
+  }
+
+  function captureInlineStyles(element) {
+    var keys = ["width", "height", "padding", "margin", "fontSize", "color", "backgroundColor", "borderRadius"];
+    var snapshot = {};
+    keys.forEach(function (key) {
+      snapshot[key] = element.style[key] || "";
+    });
+    return snapshot;
+  }
+
+  function restoreEditorPreview() {
+    var preview = state.editor.preview;
+    if (!preview || !preview.element) return;
+    Object.keys(preview.styles || {}).forEach(function (key) {
+      preview.element.style[key] = preview.styles[key] || "";
+    });
+    if (preview.text !== null && canEditText(preview.element)) {
+      preview.element.textContent = preview.text;
+    }
+    if (preview.placeholder !== null && "placeholder" in preview.element) {
+      preview.element.setAttribute("placeholder", preview.placeholder);
+    }
+    state.editor.preview = null;
   }
 
   function buildElementSelector(element) {
@@ -1612,9 +1678,9 @@ export const appScript = String.raw`
     var parts = [];
     var node = element;
     while (node && node.matches && !node.matches(root) && node !== document.body) {
-      var part = node.tagName.toLowerCase();
+      var part = stableSelectorPart(node);
       var stableClass = stableClassName(node);
-      if (stableClass) part += "." + cssEscape(stableClass);
+      if (stableClass && part.indexOf(".") === -1 && part.indexOf("[") === -1) part += "." + cssEscape(stableClass);
       var parent = node.parentElement;
       if (parent) {
         var sameTag = Array.prototype.filter.call(parent.children, function (child) {
@@ -1631,6 +1697,21 @@ export const appScript = String.raw`
       node = parent;
     }
     return root + " " + parts.join(" > ");
+  }
+
+  function stableSelectorPart(node) {
+    var tag = node.tagName.toLowerCase();
+    var attrs = ["data-action", "name", "type", "role", "aria-label"];
+    for (var i = 0; i < attrs.length; i += 1) {
+      var value = node.getAttribute(attrs[i]);
+      if (!value) continue;
+      var candidate = tag + "[" + attrs[i] + '="' + cssString(value) + '"]';
+      try {
+        if (document.querySelectorAll(candidate).length <= 12) return candidate;
+      } catch (_) {
+      }
+    }
+    return tag;
   }
 
   function stableClassName(node) {
@@ -1658,8 +1739,11 @@ export const appScript = String.raw`
   }
 
   function rgbToHex(value) {
-    var match = String(value || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-    if (!match) return "#ffffff";
+    value = String(value || "").trim();
+    if (!value || value === "transparent" || value === "rgba(0, 0, 0, 0)") return "";
+    var match = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([.\d]+))?/i);
+    if (!match) return "";
+    if (match[4] !== undefined && Number(match[4]) === 0) return "";
     return "#" + [match[1], match[2], match[3]].map(function (part) {
       return Math.max(0, Math.min(255, Number(part))).toString(16).padStart(2, "0");
     }).join("");
@@ -1676,6 +1760,7 @@ export const appScript = String.raw`
   function collectElementOverride(form) {
     var data = new FormData(form);
     var styles = {};
+    var styleKeys = [];
     setPxStyle(styles, "width", data.get("widthPx"));
     setPxStyle(styles, "height", data.get("heightPx"));
     setPxStyle(styles, "padding", data.get("paddingPx"));
@@ -1684,28 +1769,49 @@ export const appScript = String.raw`
     setPxStyle(styles, "borderRadius", data.get("borderRadiusPx"));
     setColorStyle(styles, "color", data.get("color"));
     setColorStyle(styles, "backgroundColor", data.get("backgroundColor"));
+    styleKeys = Object.keys(styles);
     var override = {
       selector: String(data.get("selector") || "").trim(),
-      styles: styles
+      styles: styles,
+      styleKeys: styleKeys
     };
-    if (form.getAttribute("data-can-text") === "true") override.text = String(data.get("text") || "").trim().slice(0, 500);
-    if (data.has("placeholder")) override.placeholder = String(data.get("placeholder") || "").trim().slice(0, 160);
+    var text = String(data.get("text") || "").trim().slice(0, 500);
+    var placeholder = String(data.get("placeholder") || "").trim().slice(0, 160);
+    if (form.getAttribute("data-can-text") === "true" && text) override.text = text;
+    if (data.has("placeholder") && placeholder) override.placeholder = placeholder;
     return override;
   }
 
   function setPxStyle(styles, key, value) {
+    if (String(value || "").trim() === "") return;
     var number = Math.round(Number(value));
     if (Number.isFinite(number) && number >= 0 && number <= 1600) styles[key] = number + "px";
   }
 
   function setColorStyle(styles, key, value) {
     value = String(value || "").trim();
-    if (/^#[0-9a-f]{6}$/i.test(value)) styles[key] = value;
+    if (!value) return;
+    if (/^#[0-9a-f]{6}$/i.test(value) || /^(transparent|inherit|unset|currentColor)$/i.test(value)) styles[key] = value;
   }
 
   function previewElementUi(form) {
+    restoreElementToPreviewBaseline();
     var override = collectElementOverride(form);
     applyElementOverride(override);
+  }
+
+  function restoreElementToPreviewBaseline() {
+    var preview = state.editor.preview;
+    if (!preview || !preview.element) return;
+    Object.keys(preview.styles || {}).forEach(function (key) {
+      preview.element.style[key] = preview.styles[key] || "";
+    });
+    if (preview.text !== null && canEditText(preview.element)) {
+      preview.element.textContent = preview.text;
+    }
+    if (preview.placeholder !== null && "placeholder" in preview.element) {
+      preview.element.setAttribute("placeholder", preview.placeholder);
+    }
   }
 
   function updateElementCssSnippet(form) {
@@ -1715,6 +1821,9 @@ export const appScript = String.raw`
     Object.keys(override.styles).forEach(function (key) {
       lines.push("  " + cssPropertyName(key) + ": " + override.styles[key] + ";");
     });
+    if (!Object.keys(override.styles).length) {
+      lines.push("  /* 未填写样式，保存后不会覆盖原 CSS */");
+    }
     lines.push("}");
     var field = form.querySelector('textarea[name="cssSnippet"]');
     if (field) field.value = lines.join("\n");
@@ -1728,16 +1837,57 @@ export const appScript = String.raw`
     try {
       var override = collectElementOverride(form);
       if (!override.selector) throw new Error("没有选中元素");
+      if (!hasOverrideChanges(override)) throw new Error("还没有填写要保存的改动");
       var overrides = (state.ui.editorOverrides || []).filter(function (item) {
         return item.selector !== override.selector;
       });
       overrides.push(override);
       var saved = await api("/api/admin/site-settings", { method: "PATCH", body: { ui: currentUiPayload(overrides) } });
       applyUiConfig(saved.ui);
+      state.editor.preview = null;
       renderHeader();
       syncEditorChrome();
       closeModal();
       toast("元素样式已保存");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function hasOverrideChanges(override) {
+    return Boolean(
+      Object.keys(override.styles || {}).length ||
+      typeof override.text === "string" ||
+      typeof override.placeholder === "string"
+    );
+  }
+
+  async function resetSelectedElementUi() {
+    try {
+      var form = document.getElementById("ui-element-form");
+      if (!form) return;
+      var selector = String(new FormData(form).get("selector") || "").trim();
+      var overrides = (state.ui.editorOverrides || []).filter(function (item) {
+        return item.selector !== selector;
+      });
+      var saved = await api("/api/admin/site-settings", { method: "PATCH", body: { ui: currentUiPayload(overrides) } });
+      applyUiConfig(saved.ui);
+      state.editor.preview = null;
+      closeModal();
+      toast("此元素已恢复原样");
+      await route();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function clearAllEditorOverrides() {
+    try {
+      if (!confirm("清空所有图形编辑保存的样式和文字覆盖？")) return;
+      var saved = await api("/api/admin/site-settings", { method: "PATCH", body: { ui: currentUiPayload([]) } });
+      applyUiConfig(saved.ui);
+      toast("已清空图形编辑覆盖");
+      await route();
     } catch (error) {
       toast(error.message);
     }

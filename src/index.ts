@@ -31,6 +31,7 @@ type ElementOverride = {
   selector: string;
   text?: string;
   placeholder?: string;
+  styleKeys: ElementStyleKey[];
   styles: Partial<Record<ElementStyleKey, string>>;
 };
 
@@ -748,9 +749,11 @@ function sanitizeEditorOverrides(value: unknown): ElementOverride[] {
     const raw = typeof item === "object" && item !== null ? item as Record<string, unknown> : {};
     const selector = cleanSelector(raw.selector);
     if (!selector) continue;
+    const styleKeys = sanitizeStyleKeys(raw.styleKeys);
     const override: ElementOverride = {
       selector,
-      styles: sanitizeElementStyles(raw.styles)
+      styleKeys,
+      styles: sanitizeElementStyles(raw.styles, styleKeys)
     };
     if (typeof raw.text === "string") {
       override.text = cleanText(raw.text, 500);
@@ -763,15 +766,30 @@ function sanitizeEditorOverrides(value: unknown): ElementOverride[] {
   return overrides;
 }
 
-function sanitizeElementStyles(value: unknown): Partial<Record<ElementStyleKey, string>> {
+function sanitizeStyleKeys(value: unknown): ElementStyleKey[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<ElementStyleKey>(["width", "height", "padding", "margin", "fontSize", "color", "backgroundColor", "borderRadius"]);
+  const keys: ElementStyleKey[] = [];
+  for (const item of value) {
+    if (allowed.has(item as ElementStyleKey) && !keys.includes(item as ElementStyleKey)) {
+      keys.push(item as ElementStyleKey);
+    }
+  }
+  return keys;
+}
+
+function sanitizeElementStyles(value: unknown, styleKeys: ElementStyleKey[]): Partial<Record<ElementStyleKey, string>> {
   const raw = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
   const styles: Partial<Record<ElementStyleKey, string>> = {};
+  const allowedKeys = new Set(styleKeys);
   const lengthKeys: ElementStyleKey[] = ["width", "height", "padding", "margin", "fontSize", "borderRadius"];
   for (const key of lengthKeys) {
+    if (!allowedKeys.has(key)) continue;
     const sanitized = cleanCssLength(raw[key]);
     if (sanitized) styles[key] = sanitized;
   }
   for (const key of ["color", "backgroundColor"] as ElementStyleKey[]) {
+    if (!allowedKeys.has(key)) continue;
     const sanitized = cleanCssColor(raw[key]);
     if (sanitized) styles[key] = sanitized;
   }
@@ -791,7 +809,7 @@ function cleanCssLength(value: unknown): string {
 
 function cleanCssColor(value: unknown): string {
   const text = String(value ?? "").trim();
-  return /^#[0-9a-f]{6}$/i.test(text) ? text : "";
+  return /^#[0-9a-f]{6}$/i.test(text) || /^(transparent|inherit|unset|currentColor)$/i.test(text) ? text : "";
 }
 
 async function syncTags(db: D1Database, postId: string, tags: string[]) {
