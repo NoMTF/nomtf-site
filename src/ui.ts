@@ -158,6 +158,7 @@ a { color: inherit; }
   background: var(--surface);
   border-radius: 8px;
   min-width: 0;
+  max-width: 100%;
   height: 42px;
   overflow: hidden;
 }
@@ -680,6 +681,48 @@ a { color: inherit; }
   gap: 16px;
 }
 
+.visual-toolbar {
+  position: sticky;
+  top: 86px;
+  z-index: 15;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.visual-toolbar h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.visual-toolbar p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.searchbar.is-editor-selectable {
+  cursor: crosshair;
+  outline: 2px dashed var(--pink-strong);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 8px rgba(255, 143, 199, .16);
+}
+
+.searchbar.is-editor-selectable input,
+.searchbar.is-editor-selectable button {
+  pointer-events: none;
+}
+
+.editor-form-preview {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-blue);
+  padding: 14px;
+}
+
 .admin-section {
   padding: 16px;
 }
@@ -826,7 +869,16 @@ export const appScript = String.raw`
     filters: { q: "", level: "", tag: "" },
     post: null,
     comments: [],
-    admin: null
+    admin: null,
+    ui: {
+      searchPlaceholder: "搜索物品、现象、标签",
+      searchWidthPx: 920
+    },
+    editor: {
+      route: false,
+      active: false,
+      selected: ""
+    }
   };
 
   var levels = {
@@ -839,8 +891,10 @@ export const appScript = String.raw`
 
   document.addEventListener("DOMContentLoaded", init);
   window.addEventListener("hashchange", route);
+  document.addEventListener("click", onEditorClick, true);
   document.addEventListener("click", onClick);
   document.addEventListener("submit", onSubmit);
+  document.addEventListener("input", onInput);
 
   async function init() {
     renderHeader();
@@ -851,6 +905,8 @@ export const appScript = String.raw`
       state.visitorId = me.visitorId;
       state.permission = me.permission;
       state.termsVersion = me.termsVersion || state.termsVersion;
+      var settings = await api("/api/site-settings");
+      applyUiConfig(settings.ui);
     } catch (error) {
       toast(error.message);
     }
@@ -858,8 +914,14 @@ export const appScript = String.raw`
   }
 
   async function route() {
-    renderHeader();
     var hash = location.hash || "#/";
+    state.editor.route = hash === "#/admin/editor";
+    if (!state.editor.route) {
+      state.editor.active = false;
+      state.editor.selected = "";
+    }
+    document.body.classList.toggle("editor-selecting", state.editor.route && state.editor.active);
+    renderHeader();
     if (hash.indexOf("#/post/") === 0) {
       var slug = decodeURIComponent(hash.replace("#/post/", ""));
       await loadPost(slug);
@@ -869,6 +931,11 @@ export const appScript = String.raw`
     if (hash === "#/admin") {
       await loadAdmin();
       renderAdmin();
+      return;
+    }
+    if (hash === "#/admin/editor") {
+      await loadPosts();
+      renderVisualEditor();
       return;
     }
     if (hash === "#/new") {
@@ -892,14 +959,19 @@ export const appScript = String.raw`
       userBlock = '<button class="primary-button" data-action="auth" title="登录">' + icon("user") + '<span>登录</span></button>';
     }
 
+    var searchWidth = Number(state.ui.searchWidthPx || 920);
+    var searchClass = "searchbar" + (state.editor.route && state.editor.active ? " is-editor-selectable" : "");
+    var searchAttrs = state.editor.route && state.editor.active ? ' data-edit-target="searchbar" data-edit-label="搜索栏"' : "";
+    var searchStyle = ' style="width:' + escAttr(String(searchWidth)) + 'px"';
+
     header.innerHTML =
       '<div class="header-inner">' +
         '<a class="brand" href="#/" data-action="home">' +
           '<span class="brand-mark">N</span>' +
           '<span class="brand-text"><span class="brand-name">NoMTF</span><span class="brand-cn">不药娘网</span></span>' +
         '</a>' +
-        '<form class="searchbar" id="search-form">' +
-          '<input name="q" type="search" placeholder="搜索物品、现象、标签" value="' + esc(state.filters.q) + '" autocomplete="off">' +
+        '<form class="' + searchClass + '" id="search-form"' + searchAttrs + searchStyle + '>' +
+          '<input name="q" type="search" placeholder="' + escAttr(state.ui.searchPlaceholder) + '" value="' + esc(state.filters.q) + '" autocomplete="off">' +
           '<button class="icon-button" type="submit" title="搜索">' + icon("search") + '</button>' +
         '</form>' +
         '<nav class="nav-actions">' + userBlock + '</nav>' +
@@ -938,6 +1010,14 @@ export const appScript = String.raw`
     };
   }
 
+  function applyUiConfig(ui) {
+    ui = ui || {};
+    var placeholder = String(ui.searchPlaceholder || state.ui.searchPlaceholder || "搜索物品、现象、标签").trim();
+    var width = Math.round(Number(ui.searchWidthPx || state.ui.searchWidthPx || 920));
+    state.ui.searchPlaceholder = placeholder.slice(0, 80) || "搜索物品、现象、标签";
+    state.ui.searchWidthPx = clamp(width, 240, 1100);
+  }
+
   function renderHome() {
     var app = document.getElementById("app");
     app.innerHTML =
@@ -959,6 +1039,27 @@ export const appScript = String.raw`
         renderFilters() +
         '<div class="feed">' + renderFeed() + '</div>' +
       '</section>';
+  }
+
+  function renderVisualEditor() {
+    if (!state.user || state.user.role !== "admin") {
+      document.getElementById("app").innerHTML = '<div class="empty-state">需要管理员权限。</div>';
+      return;
+    }
+    renderHome();
+    document.getElementById("app").insertAdjacentHTML("afterbegin", renderVisualToolbar());
+  }
+
+  function renderVisualToolbar() {
+    return '<section class="panel visual-toolbar">' +
+      '<div><h1>图形编辑</h1><p>' + (state.editor.active ? '选择模式已开启，点击页面元素进行修改。' : '页面保持正常外观，点击开始后选择可编辑元素。') + '</p></div>' +
+      '<div class="hero-actions">' +
+        (state.editor.active
+          ? '<button class="danger-button" data-action="editor-stop">' + icon("back") + '<span>停止</span></button>'
+          : '<button class="primary-button" data-action="editor-start">' + icon("plus") + '<span>开始</span></button>') +
+        '<button class="ghost-button" data-action="admin">' + icon("shield") + '<span>返回后台</span></button>' +
+      '</div>' +
+    '</section>';
   }
 
   function levelRow(key) {
@@ -1111,7 +1212,7 @@ export const appScript = String.raw`
     }
     app.innerHTML =
       '<section class="admin-grid">' +
-        '<div class="panel admin-section"><h1>管理员后台</h1><p class="post-summary">删除帖子、处理回复、限制访客和管理账号权限。</p></div>' +
+        '<div class="panel admin-section"><h1>管理员后台</h1><p class="post-summary">删除帖子、处理回复、限制访客、管理账号权限和调整页面文案。</p><div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div></div>' +
         renderAdminPosts() +
         renderAdminComments() +
         renderAdminUsers() +
@@ -1190,6 +1291,15 @@ export const appScript = String.raw`
     if (action === "terms") showTerms(true);
     if (action === "new-post") location.hash = "#/new";
     if (action === "admin") location.hash = "#/admin";
+    if (action === "visual-editor") location.hash = "#/admin/editor";
+    if (action === "editor-start") {
+      state.editor.active = true;
+      await route();
+    }
+    if (action === "editor-stop") {
+      state.editor.active = false;
+      await route();
+    }
     if (action === "logout") await logout();
     if (action === "open-post") location.hash = "#/post/" + encodeURIComponent(target.getAttribute("data-slug"));
     if (action === "filter-level") {
@@ -1219,9 +1329,26 @@ export const appScript = String.raw`
     if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
   }
 
+  function onEditorClick(event) {
+    if (!state.editor.route || !state.editor.active) return;
+    var target = event.target.closest("[data-edit-target]");
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var editTarget = target.getAttribute("data-edit-target");
+    if (editTarget === "searchbar") {
+      state.editor.selected = "searchbar";
+      showSearchEditor();
+    }
+  }
+
   async function onSubmit(event) {
     if (event.target.id === "search-form") {
       event.preventDefault();
+      if (state.editor.route && state.editor.active) {
+        showSearchEditor();
+        return;
+      }
       state.filters.q = new FormData(event.target).get("q").trim();
       location.hash = "#/";
       await route();
@@ -1250,7 +1377,32 @@ export const appScript = String.raw`
     if (event.target.id === "permission-form") {
       event.preventDefault();
       await createPermission(event.target);
+      return;
     }
+    if (event.target.id === "ui-search-form") {
+      event.preventDefault();
+      await saveSearchUi(event.target);
+    }
+  }
+
+  function onInput(event) {
+    if (!event.target.closest || !event.target.closest("#ui-search-form")) return;
+    var form = event.target.closest("#ui-search-form");
+    var data = new FormData(form);
+    applyUiConfig({
+      searchPlaceholder: data.get("searchPlaceholder"),
+      searchWidthPx: data.get("searchWidthPx")
+    });
+    var widthNumber = form.querySelector('input[name="searchWidthNumber"]');
+    var widthRange = form.querySelector('input[name="searchWidthPx"]');
+    if (widthNumber && widthRange && event.target.name === "searchWidthNumber") {
+      widthRange.value = String(clamp(Number(widthNumber.value), 240, 1100));
+      state.ui.searchWidthPx = Number(widthRange.value);
+    }
+    if (widthNumber && widthRange && event.target.name === "searchWidthPx") {
+      widthNumber.value = widthRange.value;
+    }
+    renderHeader();
   }
 
   document.addEventListener("change", async function (event) {
@@ -1362,6 +1514,45 @@ export const appScript = String.raw`
       form.reset();
       toast("规则已添加");
       await route();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function showSearchEditor() {
+    showModal(
+      '<div class="modal">' +
+        '<div class="modal-head"><h2>编辑搜索栏</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
+        '<div class="modal-body">' +
+          '<form id="ui-search-form" class="form-grid">' +
+            '<div class="field"><label>提示文字</label><input name="searchPlaceholder" maxlength="80" value="' + escAttr(state.ui.searchPlaceholder) + '"></div>' +
+            '<div class="two-col">' +
+              '<div class="field"><label>搜索框宽度</label><input name="searchWidthPx" type="range" min="240" max="1100" step="10" value="' + escAttr(String(state.ui.searchWidthPx)) + '"></div>' +
+              '<div class="field"><label>像素</label><input name="searchWidthNumber" type="number" min="240" max="1100" step="10" value="' + escAttr(String(state.ui.searchWidthPx)) + '"></div>' +
+            '</div>' +
+            '<div class="editor-form-preview"><strong>实时预览：</strong><span> 页面顶部搜索栏会跟着变化，保存后所有访客可见。</span></div>' +
+            '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
+          '</form>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  async function saveSearchUi(form) {
+    try {
+      var data = new FormData(form);
+      var width = Number(data.get("searchWidthNumber") || data.get("searchWidthPx"));
+      var payload = {
+        ui: {
+          searchPlaceholder: data.get("searchPlaceholder"),
+          searchWidthPx: width
+        }
+      };
+      var saved = await api("/api/admin/site-settings", { method: "PATCH", body: payload });
+      applyUiConfig(saved.ui);
+      renderHeader();
+      closeModal();
+      toast("搜索栏已更新");
     } catch (error) {
       toast(error.message);
     }
@@ -1509,6 +1700,12 @@ export const appScript = String.raw`
 
   function selected(value, expected) {
     return value === expected ? "selected" : "";
+  }
+
+  function clamp(value, min, max) {
+    value = Number(value);
+    if (!Number.isFinite(value)) return min;
+    return Math.min(max, Math.max(min, value));
   }
 
   function toast(message) {

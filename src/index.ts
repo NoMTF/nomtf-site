@@ -21,6 +21,11 @@ type SessionUser = User & {
   expires_at: string;
 };
 
+type UiConfig = {
+  searchPlaceholder: string;
+  searchWidthPx: number;
+};
+
 type Variables = {
   user: User | null;
   visitorId: string;
@@ -43,6 +48,10 @@ const TERMS_VERSION = "2026-04-28";
 const MAX_POST_BYTES = 80_000;
 const MAX_COMMENT_BYTES = 4_000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_UI_CONFIG: UiConfig = {
+  searchPlaceholder: "搜索物品、现象、标签",
+  searchWidthPx: 920
+};
 
 app.onError((err, c) => {
   console.error(JSON.stringify({ level: "error", message: err.message, stack: err.stack }));
@@ -104,6 +113,12 @@ app.get("/api/me", async (c) => {
     visitorId: c.get("visitorId"),
     permission: c.get("permission"),
     termsVersion: TERMS_VERSION
+  });
+});
+
+app.get("/api/site-settings", async (c) => {
+  return c.json({
+    ui: await getUiConfig(c.env.DB)
   });
 });
 
@@ -546,6 +561,19 @@ app.delete("/api/admin/permissions/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+app.patch("/api/admin/site-settings", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const body = await readJson(c);
+  const ui = sanitizeUiConfig(body.ui);
+  await c.env.DB.prepare(`
+    INSERT INTO site_settings (key, value, updated_at)
+    VALUES ('ui_config', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).bind(JSON.stringify(ui), nowIso()).run();
+  return c.json({ ok: true, ui });
+});
+
 app.get("*", (c) => {
   return new Response(renderPage(), {
     headers: {
@@ -678,6 +706,26 @@ async function readJson(c: AppContext): Promise<Record<string, unknown>> {
   } catch {
     return {};
   }
+}
+
+async function getUiConfig(db: D1Database): Promise<UiConfig> {
+  const row = await db.prepare("SELECT value FROM site_settings WHERE key = 'ui_config'").first<{ value: string }>();
+  if (!row?.value) return DEFAULT_UI_CONFIG;
+  try {
+    return sanitizeUiConfig(JSON.parse(row.value));
+  } catch {
+    return DEFAULT_UI_CONFIG;
+  }
+}
+
+function sanitizeUiConfig(value: unknown): UiConfig {
+  const raw = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const placeholder = cleanText(raw.searchPlaceholder, 80) || DEFAULT_UI_CONFIG.searchPlaceholder;
+  const width = Math.round(Number(raw.searchWidthPx ?? DEFAULT_UI_CONFIG.searchWidthPx));
+  return {
+    searchPlaceholder: placeholder,
+    searchWidthPx: clampNumber(width, 240, 1100, DEFAULT_UI_CONFIG.searchWidthPx)
+  };
 }
 
 async function syncTags(db: D1Database, postId: string, tags: string[]) {
@@ -836,6 +884,11 @@ function cleanName(value: unknown): string {
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function clampNumber(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
 }
 
 function cleanTags(value: unknown): string[] {
