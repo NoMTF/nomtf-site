@@ -1,3 +1,5 @@
+const ASSET_VERSION = "20260428-editor-cache";
+
 export function renderPage(): string {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -6,8 +8,8 @@ export function renderPage(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>NoMTF 不药娘网</title>
     <meta name="description" content="NoMTF 是一个娱乐向评级社区，用 1-5 级给物品和现象做荒诞评级。">
-    <link rel="stylesheet" href="/assets/app.css">
-    <script src="/assets/app.js" defer></script>
+    <link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}">
+    <script src="/assets/app.js?v=${ASSET_VERSION}" defer></script>
   </head>
   <body>
     <div id="modal-root"></div>

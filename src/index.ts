@@ -71,7 +71,7 @@ app.get("/assets/app.css", (c) => {
   return new Response(styles, {
     headers: {
       "Content-Type": "text/css; charset=utf-8",
-      "Cache-Control": "public, max-age=3600"
+      "Cache-Control": "no-store"
     }
   });
 });
@@ -80,7 +80,7 @@ app.get("/assets/app.js", (c) => {
   return new Response(appScript, {
     headers: {
       "Content-Type": "text/javascript; charset=utf-8",
-      "Cache-Control": "public, max-age=3600"
+      "Cache-Control": "no-store"
     }
   });
 });
