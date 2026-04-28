@@ -11,20 +11,20 @@
     "head_sampling_rate": 1
   },
   "vars": {
-    "ENVIRONMENT": "local"
+    "ENVIRONMENT": "production"
   },
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "nomtf-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "nomtf",
+      "database_id": "8d4cfa48-a053-4e8c-9800-803852ec973c",
       "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "MEDIA",
-      "bucket_name": "nomtf-media"
+      "bucket_name": "nomtf"
     }
   ]
 }

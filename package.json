@@ -8,8 +8,8 @@
     "deploy": "wrangler deploy",
     "check": "tsc --noEmit && wrangler deploy --dry-run",
     "types": "wrangler types",
-    "db:migrate:local": "wrangler d1 migrations apply nomtf-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply nomtf-db --remote"
+    "db:migrate:local": "wrangler d1 migrations apply nomtf --local",
+    "db:migrate:remote": "wrangler d1 migrations apply nomtf --remote"
   },
   "dependencies": {
     "hono": "^4.10.7"

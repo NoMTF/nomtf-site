@@ -43,17 +43,17 @@ nomtf-local-admin
 ## 创建 Cloudflare 资源
 
 ```bash
-npx wrangler d1 create nomtf-db
-npx wrangler r2 bucket create nomtf-media
+npx wrangler d1 create nomtf
+npx wrangler r2 bucket create nomtf
 ```
 
-把 `wrangler d1 create` 返回的 `database_id` 填到 `wrangler.jsonc`：
+如果你重新创建 D1，把 `wrangler d1 create` 返回的 `database_id` 填到 `wrangler.jsonc`：
 
 ```jsonc
 "d1_databases": [
   {
     "binding": "DB",
-    "database_name": "nomtf-db",
+    "database_name": "nomtf",
     "database_id": "替换成真实 database_id",
     "migrations_dir": "migrations"
   }
