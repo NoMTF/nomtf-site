@@ -48,6 +48,7 @@ const TERMS_VERSION = "2026-04-28";
 const MAX_POST_BYTES = 80_000;
 const MAX_COMMENT_BYTES = 4_000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const PASSWORD_ITERATIONS = 100_000;
 const DEFAULT_UI_CONFIG: UiConfig = {
   searchPlaceholder: "搜索物品、现象、标签",
   searchWidthPx: 920
@@ -795,11 +796,11 @@ async function hashPassword(password: string): Promise<string> {
   crypto.getRandomValues(salt);
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 310_000, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations: PASSWORD_ITERATIONS, hash: "SHA-256" },
     key,
     256
   );
-  return `pbkdf2_sha256$310000$${base64Url(salt)}$${base64Url(new Uint8Array(bits))}`;
+  return `pbkdf2_sha256$${PASSWORD_ITERATIONS}$${base64Url(salt)}$${base64Url(new Uint8Array(bits))}`;
 }
 
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
