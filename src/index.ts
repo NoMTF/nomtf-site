@@ -24,7 +24,17 @@ type SessionUser = User & {
 type UiConfig = {
   searchPlaceholder: string;
   searchWidthPx: number;
+  editorOverrides: ElementOverride[];
 };
+
+type ElementOverride = {
+  selector: string;
+  text?: string;
+  placeholder?: string;
+  styles: Partial<Record<ElementStyleKey, string>>;
+};
+
+type ElementStyleKey = "width" | "height" | "padding" | "margin" | "fontSize" | "color" | "backgroundColor" | "borderRadius";
 
 type Variables = {
   user: User | null;
@@ -51,7 +61,8 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const PASSWORD_ITERATIONS = 100_000;
 const DEFAULT_UI_CONFIG: UiConfig = {
   searchPlaceholder: "搜索物品、现象、标签",
-  searchWidthPx: 920
+  searchWidthPx: 920,
+  editorOverrides: []
 };
 
 app.onError((err, c) => {
@@ -725,8 +736,62 @@ function sanitizeUiConfig(value: unknown): UiConfig {
   const width = Math.round(Number(raw.searchWidthPx ?? DEFAULT_UI_CONFIG.searchWidthPx));
   return {
     searchPlaceholder: placeholder,
-    searchWidthPx: clampNumber(width, 240, 1100, DEFAULT_UI_CONFIG.searchWidthPx)
+    searchWidthPx: clampNumber(width, 240, 1100, DEFAULT_UI_CONFIG.searchWidthPx),
+    editorOverrides: sanitizeEditorOverrides(raw.editorOverrides)
   };
+}
+
+function sanitizeEditorOverrides(value: unknown): ElementOverride[] {
+  if (!Array.isArray(value)) return [];
+  const overrides: ElementOverride[] = [];
+  for (const item of value.slice(0, 80)) {
+    const raw = typeof item === "object" && item !== null ? item as Record<string, unknown> : {};
+    const selector = cleanSelector(raw.selector);
+    if (!selector) continue;
+    const override: ElementOverride = {
+      selector,
+      styles: sanitizeElementStyles(raw.styles)
+    };
+    if (typeof raw.text === "string") {
+      override.text = cleanText(raw.text, 500);
+    }
+    if (typeof raw.placeholder === "string") {
+      override.placeholder = cleanText(raw.placeholder, 160);
+    }
+    overrides.push(override);
+  }
+  return overrides;
+}
+
+function sanitizeElementStyles(value: unknown): Partial<Record<ElementStyleKey, string>> {
+  const raw = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const styles: Partial<Record<ElementStyleKey, string>> = {};
+  const lengthKeys: ElementStyleKey[] = ["width", "height", "padding", "margin", "fontSize", "borderRadius"];
+  for (const key of lengthKeys) {
+    const sanitized = cleanCssLength(raw[key]);
+    if (sanitized) styles[key] = sanitized;
+  }
+  for (const key of ["color", "backgroundColor"] as ElementStyleKey[]) {
+    const sanitized = cleanCssColor(raw[key]);
+    if (sanitized) styles[key] = sanitized;
+  }
+  return styles;
+}
+
+function cleanSelector(value: unknown): string {
+  const selector = cleanText(value, 240);
+  if (!selector || /[{};]/.test(selector)) return "";
+  return selector;
+}
+
+function cleanCssLength(value: unknown): string {
+  const text = String(value ?? "").trim();
+  return /^(?:0|0px|[1-9]\d{0,3}(?:px|rem|em|%))$/.test(text) ? text : "";
+}
+
+function cleanCssColor(value: unknown): string {
+  const text = String(value ?? "").trim();
+  return /^#[0-9a-f]{6}$/i.test(text) ? text : "";
 }
 
 async function syncTags(db: D1Database, postId: string, tags: string[]) {

@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260428-editor-cache";
+const ASSET_VERSION = "20260428-global-editor";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -695,6 +695,12 @@ a { color: inherit; }
   gap: 12px;
 }
 
+.editor-toolbar-root {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 16px auto 0;
+  padding: 0;
+}
+
 .visual-toolbar h1 {
   margin: 0;
   font-size: 20px;
@@ -704,6 +710,27 @@ a { color: inherit; }
   margin: 2px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.visual-toolbar {
+  user-select: none;
+}
+
+.editor-target {
+  cursor: crosshair !important;
+}
+
+.editor-hover,
+.editor-selected {
+  outline: 2px dashed var(--pink-strong) !important;
+  outline-offset: 4px !important;
+  box-shadow: 0 0 0 8px rgba(255, 143, 199, .16) !important;
+}
+
+.editor-code {
+  min-height: 86px;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
 }
 
 .searchbar.is-editor-selectable {
@@ -874,12 +901,15 @@ export const appScript = String.raw`
     admin: null,
     ui: {
       searchPlaceholder: "搜索物品、现象、标签",
-      searchWidthPx: 920
+      searchWidthPx: 920,
+      editorOverrides: []
     },
     editor: {
-      route: false,
+      enabled: false,
       active: false,
-      selected: ""
+      selected: "",
+      element: null,
+      hover: null
     }
   };
 
@@ -897,6 +927,8 @@ export const appScript = String.raw`
   document.addEventListener("click", onClick);
   document.addEventListener("submit", onSubmit);
   document.addEventListener("input", onInput);
+  document.addEventListener("mouseover", onEditorHover, true);
+  document.addEventListener("mouseout", onEditorHoverOut, true);
 
   async function init() {
     renderHeader();
@@ -917,35 +949,47 @@ export const appScript = String.raw`
 
   async function route() {
     var hash = location.hash || "#/";
-    state.editor.route = hash === "#/admin/editor";
-    if (!state.editor.route) {
+    if (hash === "#/admin/editor") {
+      if (!state.user || state.user.role !== "admin") {
+        renderHeader();
+        document.getElementById("app").innerHTML = '<div class="empty-state">需要管理员权限。</div>';
+        return;
+      }
+      state.editor.enabled = true;
+      state.editor.active = false;
+      state.editor.selected = "";
+      location.hash = "#/";
+      return;
+    }
+    if (!state.user || state.user.role !== "admin") {
+      state.editor.enabled = false;
       state.editor.active = false;
       state.editor.selected = "";
     }
-    document.body.classList.toggle("editor-selecting", state.editor.route && state.editor.active);
+    clearEditorHover();
+    document.body.classList.toggle("editor-selecting", state.editor.enabled && state.editor.active);
     renderHeader();
     if (hash.indexOf("#/post/") === 0) {
       var slug = decodeURIComponent(hash.replace("#/post/", ""));
       await loadPost(slug);
       renderPost();
+      syncEditorChrome();
       return;
     }
     if (hash === "#/admin") {
       await loadAdmin();
       renderAdmin();
-      return;
-    }
-    if (hash === "#/admin/editor") {
-      await loadPosts();
-      renderVisualEditor();
+      syncEditorChrome();
       return;
     }
     if (hash === "#/new") {
       renderComposePage();
+      syncEditorChrome();
       return;
     }
     await loadPosts();
     renderHome();
+    syncEditorChrome();
   }
 
   function renderHeader() {
@@ -962,8 +1006,8 @@ export const appScript = String.raw`
     }
 
     var searchWidth = Number(state.ui.searchWidthPx || 920);
-    var searchClass = "searchbar" + (state.editor.route && state.editor.active ? " is-editor-selectable" : "");
-    var searchAttrs = state.editor.route && state.editor.active ? ' data-edit-target="searchbar" data-edit-label="搜索栏"' : "";
+    var searchClass = "searchbar" + (state.editor.enabled && state.editor.active ? " is-editor-selectable editor-target" : "");
+    var searchAttrs = state.editor.enabled && state.editor.active ? ' data-edit-target="searchbar" data-edit-label="搜索栏"' : "";
     var searchStyle = ' style="width:' + escAttr(String(searchWidth)) + 'px"';
 
     header.innerHTML =
@@ -1018,6 +1062,7 @@ export const appScript = String.raw`
     var width = Math.round(Number(ui.searchWidthPx || state.ui.searchWidthPx || 920));
     state.ui.searchPlaceholder = placeholder.slice(0, 80) || "搜索物品、现象、标签";
     state.ui.searchWidthPx = clamp(width, 240, 1100);
+    state.ui.editorOverrides = Array.isArray(ui.editorOverrides) ? ui.editorOverrides.slice(0, 80) : (state.ui.editorOverrides || []);
   }
 
   function renderHome() {
@@ -1048,20 +1093,90 @@ export const appScript = String.raw`
       document.getElementById("app").innerHTML = '<div class="empty-state">需要管理员权限。</div>';
       return;
     }
+    state.editor.enabled = true;
     renderHome();
-    document.getElementById("app").insertAdjacentHTML("afterbegin", renderVisualToolbar());
+    syncEditorChrome();
   }
 
   function renderVisualToolbar() {
     return '<section class="panel visual-toolbar">' +
-      '<div><h1>图形编辑</h1><p>' + (state.editor.active ? '选择模式已开启，点击页面元素进行修改。' : '页面保持正常外观，点击开始后选择可编辑元素。') + '</p></div>' +
+      '<div><h1>图形编辑</h1><p>' + (state.editor.active ? '选择模式已开启，点击任意页面元素进行修改。' : '编辑模式已保持，切换页面不会消失。') + '</p></div>' +
       '<div class="hero-actions">' +
         (state.editor.active
           ? '<button class="danger-button" data-action="editor-stop">' + icon("back") + '<span>停止</span></button>'
           : '<button class="primary-button" data-action="editor-start">' + icon("plus") + '<span>开始</span></button>') +
-        '<button class="ghost-button" data-action="admin">' + icon("shield") + '<span>返回后台</span></button>' +
+        '<button class="ghost-button" data-action="admin">' + icon("shield") + '<span>后台</span></button>' +
+        '<button class="plain-button" data-action="editor-exit">退出编辑</button>' +
       '</div>' +
     '</section>';
+  }
+
+  function syncEditorChrome() {
+    document.body.classList.toggle("editor-selecting", state.editor.enabled && state.editor.active);
+    applySavedOverrides();
+    var oldRoot = document.getElementById("editor-toolbar-root");
+    if (oldRoot) oldRoot.remove();
+    if (state.editor.enabled && state.user && state.user.role === "admin") {
+      var header = document.getElementById("site-header");
+      if (header) {
+        header.insertAdjacentHTML("afterend", '<div id="editor-toolbar-root" class="editor-toolbar-root">' + renderVisualToolbar() + '</div>');
+      }
+    }
+    decorateEditableElements();
+  }
+
+  function applySavedOverrides() {
+    var overrides = state.ui.editorOverrides || [];
+    for (var i = 0; i < overrides.length; i += 1) {
+      applyElementOverride(overrides[i]);
+    }
+  }
+
+  function applyElementOverride(override) {
+    if (!override || !override.selector) return;
+    var nodes = [];
+    try {
+      nodes = Array.prototype.slice.call(document.querySelectorAll(override.selector));
+    } catch (_) {
+      return;
+    }
+    nodes.forEach(function (node) {
+      if (isEditorUi(node)) return;
+      if (typeof override.text === "string" && canEditText(node)) {
+        node.textContent = override.text;
+      }
+      if (typeof override.placeholder === "string" && "placeholder" in node) {
+        node.setAttribute("placeholder", override.placeholder);
+      }
+      applyElementStyles(node, override.styles || {});
+    });
+  }
+
+  function applyElementStyles(node, styles) {
+    var map = {
+      width: "width",
+      height: "height",
+      padding: "padding",
+      margin: "margin",
+      fontSize: "fontSize",
+      color: "color",
+      backgroundColor: "backgroundColor",
+      borderRadius: "borderRadius"
+    };
+    Object.keys(map).forEach(function (key) {
+      if (styles[key]) node.style[map[key]] = styles[key];
+    });
+  }
+
+  function decorateEditableElements() {
+    Array.prototype.forEach.call(document.querySelectorAll(".editor-target"), function (node) {
+      node.classList.remove("editor-target");
+    });
+    if (!state.editor.enabled || !state.editor.active) return;
+    Array.prototype.forEach.call(document.querySelectorAll("#site-header *, #app *"), function (node) {
+      if (isEditorUi(node) || !isVisibleElement(node)) return;
+      node.classList.add("editor-target");
+    });
   }
 
   function levelRow(key) {
@@ -1293,14 +1408,40 @@ export const appScript = String.raw`
     if (action === "terms") showTerms(true);
     if (action === "new-post") location.hash = "#/new";
     if (action === "admin") location.hash = "#/admin";
-    if (action === "visual-editor") location.hash = "#/admin/editor";
+    if (action === "visual-editor") {
+      state.editor.enabled = true;
+      state.editor.active = false;
+      state.editor.selected = "";
+      if ((location.hash || "#/") === "#/") {
+        await route();
+      } else {
+        location.hash = "#/";
+      }
+      return;
+    }
     if (action === "editor-start") {
       state.editor.active = true;
-      await route();
+      state.editor.selected = "";
+      renderHeader();
+      syncEditorChrome();
+      return;
     }
     if (action === "editor-stop") {
       state.editor.active = false;
-      await route();
+      state.editor.selected = "";
+      clearEditorHover();
+      renderHeader();
+      syncEditorChrome();
+      return;
+    }
+    if (action === "editor-exit") {
+      state.editor.enabled = false;
+      state.editor.active = false;
+      state.editor.selected = "";
+      clearEditorHover();
+      renderHeader();
+      syncEditorChrome();
+      return;
     }
     if (action === "logout") await logout();
     if (action === "open-post") location.hash = "#/post/" + encodeURIComponent(target.getAttribute("data-slug"));
@@ -1332,22 +1473,288 @@ export const appScript = String.raw`
   }
 
   function onEditorClick(event) {
-    if (!state.editor.route || !state.editor.active) return;
-    var target = event.target.closest("[data-edit-target]");
+    if (!state.editor.enabled || !state.editor.active) return;
+    if (isEditorUi(event.target)) return;
+    var target = editableTarget(event.target);
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
+    clearEditorHover();
+    state.editor.element = target;
+    state.editor.selected = describeElement(target);
+    target.classList.add("editor-selected");
     var editTarget = target.getAttribute("data-edit-target");
     if (editTarget === "searchbar") {
       state.editor.selected = "searchbar";
       showSearchEditor();
+      return;
     }
+    showElementEditor(target);
+  }
+
+  function onEditorHover(event) {
+    if (!state.editor.enabled || !state.editor.active) return;
+    var target = editableTarget(event.target);
+    if (!target || target === state.editor.hover) return;
+    if (state.editor.hover) state.editor.hover.classList.remove("editor-hover");
+    state.editor.hover = target;
+    target.classList.add("editor-hover");
+  }
+
+  function onEditorHoverOut(event) {
+    if (!state.editor.enabled || !state.editor.active || !state.editor.hover) return;
+    if (event.relatedTarget && state.editor.hover.contains(event.relatedTarget)) return;
+    state.editor.hover.classList.remove("editor-hover");
+    state.editor.hover = null;
+  }
+
+  function clearEditorHover() {
+    Array.prototype.forEach.call(document.querySelectorAll(".editor-hover, .editor-selected"), function (node) {
+      node.classList.remove("editor-hover", "editor-selected");
+    });
+    state.editor.hover = null;
+    state.editor.element = null;
+  }
+
+  function editableTarget(raw) {
+    if (!raw || !raw.closest) return null;
+    if (isEditorUi(raw)) return null;
+    var special = raw.closest("[data-edit-target]");
+    if (special && !isEditorUi(special) && isVisibleElement(special)) return special;
+    var node = raw.nodeType === 1 ? raw : raw.parentElement;
+    if (!node || !node.closest) return null;
+    var target = node.closest("button,a,input,textarea,select,label,h1,h2,h3,p,img,article,section,aside,form,div,span");
+    if (!target || isEditorUi(target) || target.id === "app" || target.id === "site-header") return null;
+    return isVisibleElement(target) ? target : null;
+  }
+
+  function isEditorUi(node) {
+    return Boolean(node && node.closest && node.closest("#editor-toolbar-root, .modal-backdrop, #toast"));
+  }
+
+  function isVisibleElement(node) {
+    if (!node || !node.getBoundingClientRect) return false;
+    var style = getComputedStyle(node);
+    var rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+  }
+
+  function describeElement(node) {
+    var label = node.getAttribute("data-edit-label") || node.getAttribute("aria-label") || node.getAttribute("title") || node.textContent || node.getAttribute("placeholder") || node.tagName.toLowerCase();
+    return String(label).replace(/\s+/g, " ").trim().slice(0, 80) || node.tagName.toLowerCase();
+  }
+
+  function canEditText(node) {
+    return !/^(INPUT|TEXTAREA|SELECT|IMG|SVG|PATH)$/i.test(node.tagName);
+  }
+
+  function showElementEditor(element) {
+    var selector = buildElementSelector(element);
+    var existing = findElementOverride(selector);
+    var computed = getComputedStyle(element);
+    var rect = element.getBoundingClientRect();
+    var styles = existing && existing.styles ? existing.styles : {};
+    var textValue = typeof existing?.text === "string" ? existing.text : (canEditText(element) ? String(element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500) : "");
+    var placeholderValue = typeof existing?.placeholder === "string" ? existing.placeholder : (("placeholder" in element) ? element.getAttribute("placeholder") || "" : "");
+    var supportsPlaceholder = "placeholder" in element;
+    var textField = canEditText(element)
+      ? '<div class="field"><label>文字</label><textarea name="text" maxlength="500">' + esc(textValue) + '</textarea></div>'
+      : "";
+    var placeholderField = supportsPlaceholder
+      ? '<div class="field"><label>placeholder</label><input name="placeholder" maxlength="160" value="' + escAttr(placeholderValue) + '"></div>'
+      : "";
+    showModal(
+      '<div class="modal large">' +
+        '<div class="modal-head"><h2>编辑元素</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
+        '<div class="modal-body">' +
+          '<form id="ui-element-form" class="form-grid" data-can-text="' + (canEditText(element) ? "true" : "false") + '">' +
+            '<div class="field"><label>选择器</label><input name="selector" readonly value="' + escAttr(selector) + '"></div>' +
+            '<div class="two-col">' + textField + placeholderField + '</div>' +
+            '<div class="two-col">' +
+              numberField("宽度", "widthPx", cssPxToNumber(styles.width, rect.width)) +
+              numberField("高度", "heightPx", cssPxToNumber(styles.height, rect.height)) +
+            '</div>' +
+            '<div class="two-col">' +
+              numberField("内边距", "paddingPx", cssPxToNumber(styles.padding, computed.paddingTop)) +
+              numberField("外边距", "marginPx", cssPxToNumber(styles.margin, computed.marginTop)) +
+            '</div>' +
+            '<div class="two-col">' +
+              numberField("字号", "fontSizePx", cssPxToNumber(styles.fontSize, computed.fontSize)) +
+              numberField("圆角", "borderRadiusPx", cssPxToNumber(styles.borderRadius, computed.borderTopLeftRadius)) +
+            '</div>' +
+            '<div class="two-col">' +
+              colorField("文字色", "color", styles.color || rgbToHex(computed.color)) +
+              colorField("背景色", "backgroundColor", styles.backgroundColor || rgbToHex(computed.backgroundColor)) +
+            '</div>' +
+            '<div class="field"><label>生成的 CSS</label><textarea class="editor-code" name="cssSnippet" readonly></textarea></div>' +
+            '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
+          '</form>' +
+        '</div>' +
+      '</div>'
+    );
+    updateElementCssSnippet(document.getElementById("ui-element-form"));
+  }
+
+  function numberField(label, name, value) {
+    var number = Number(value);
+    return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="number" min="0" max="1600" step="1" value="' + (Number.isFinite(number) ? escAttr(String(Math.round(number))) : "") + '"></div>';
+  }
+
+  function colorField(label, name, value) {
+    return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="color" value="' + escAttr(value || "#ffffff") + '"></div>';
+  }
+
+  function buildElementSelector(element) {
+    var editTarget = element.getAttribute("data-edit-target");
+    if (editTarget) return '[data-edit-target="' + cssString(editTarget) + '"]';
+    if (element.id && element.id !== "app" && element.id !== "site-header") return "#" + cssEscape(element.id);
+    var root = element.closest("#site-header") ? "#site-header" : "#app";
+    var parts = [];
+    var node = element;
+    while (node && node.matches && !node.matches(root) && node !== document.body) {
+      var part = node.tagName.toLowerCase();
+      var stableClass = stableClassName(node);
+      if (stableClass) part += "." + cssEscape(stableClass);
+      var parent = node.parentElement;
+      if (parent) {
+        var sameTag = Array.prototype.filter.call(parent.children, function (child) {
+          return child.tagName === node.tagName;
+        });
+        if (sameTag.length > 1) part += ":nth-of-type(" + (sameTag.indexOf(node) + 1) + ")";
+      }
+      parts.unshift(part);
+      var candidate = root + " " + parts.join(" > ");
+      try {
+        if (document.querySelectorAll(candidate).length === 1) return candidate;
+      } catch (_) {
+      }
+      node = parent;
+    }
+    return root + " " + parts.join(" > ");
+  }
+
+  function stableClassName(node) {
+    for (var i = 0; i < node.classList.length; i += 1) {
+      var name = node.classList[i];
+      if (!/^editor-|^is-editor-selectable$|^active$/.test(name)) return name;
+    }
+    return "";
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && CSS.escape) return CSS.escape(value);
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  function cssString(value) {
+    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function cssPxToNumber(value, fallback) {
+    var parsed = parseFloat(String(value || ""));
+    if (Number.isFinite(parsed)) return parsed;
+    parsed = parseFloat(String(fallback || ""));
+    return Number.isFinite(parsed) ? parsed : "";
+  }
+
+  function rgbToHex(value) {
+    var match = String(value || "").match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    if (!match) return "#ffffff";
+    return "#" + [match[1], match[2], match[3]].map(function (part) {
+      return Math.max(0, Math.min(255, Number(part))).toString(16).padStart(2, "0");
+    }).join("");
+  }
+
+  function findElementOverride(selector) {
+    var overrides = state.ui.editorOverrides || [];
+    for (var i = 0; i < overrides.length; i += 1) {
+      if (overrides[i].selector === selector) return overrides[i];
+    }
+    return null;
+  }
+
+  function collectElementOverride(form) {
+    var data = new FormData(form);
+    var styles = {};
+    setPxStyle(styles, "width", data.get("widthPx"));
+    setPxStyle(styles, "height", data.get("heightPx"));
+    setPxStyle(styles, "padding", data.get("paddingPx"));
+    setPxStyle(styles, "margin", data.get("marginPx"));
+    setPxStyle(styles, "fontSize", data.get("fontSizePx"));
+    setPxStyle(styles, "borderRadius", data.get("borderRadiusPx"));
+    setColorStyle(styles, "color", data.get("color"));
+    setColorStyle(styles, "backgroundColor", data.get("backgroundColor"));
+    var override = {
+      selector: String(data.get("selector") || "").trim(),
+      styles: styles
+    };
+    if (form.getAttribute("data-can-text") === "true") override.text = String(data.get("text") || "").trim().slice(0, 500);
+    if (data.has("placeholder")) override.placeholder = String(data.get("placeholder") || "").trim().slice(0, 160);
+    return override;
+  }
+
+  function setPxStyle(styles, key, value) {
+    var number = Math.round(Number(value));
+    if (Number.isFinite(number) && number >= 0 && number <= 1600) styles[key] = number + "px";
+  }
+
+  function setColorStyle(styles, key, value) {
+    value = String(value || "").trim();
+    if (/^#[0-9a-f]{6}$/i.test(value)) styles[key] = value;
+  }
+
+  function previewElementUi(form) {
+    var override = collectElementOverride(form);
+    applyElementOverride(override);
+  }
+
+  function updateElementCssSnippet(form) {
+    if (!form) return;
+    var override = collectElementOverride(form);
+    var lines = [override.selector + " {"];
+    Object.keys(override.styles).forEach(function (key) {
+      lines.push("  " + cssPropertyName(key) + ": " + override.styles[key] + ";");
+    });
+    lines.push("}");
+    var field = form.querySelector('textarea[name="cssSnippet"]');
+    if (field) field.value = lines.join("\n");
+  }
+
+  function cssPropertyName(key) {
+    return key.replace(/[A-Z]/g, function (char) { return "-" + char.toLowerCase(); });
+  }
+
+  async function saveElementUi(form) {
+    try {
+      var override = collectElementOverride(form);
+      if (!override.selector) throw new Error("没有选中元素");
+      var overrides = (state.ui.editorOverrides || []).filter(function (item) {
+        return item.selector !== override.selector;
+      });
+      overrides.push(override);
+      var saved = await api("/api/admin/site-settings", { method: "PATCH", body: { ui: currentUiPayload(overrides) } });
+      applyUiConfig(saved.ui);
+      renderHeader();
+      syncEditorChrome();
+      closeModal();
+      toast("元素样式已保存");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function currentUiPayload(overrides) {
+    return {
+      searchPlaceholder: state.ui.searchPlaceholder,
+      searchWidthPx: state.ui.searchWidthPx,
+      editorOverrides: overrides || state.ui.editorOverrides || []
+    };
   }
 
   async function onSubmit(event) {
     if (event.target.id === "search-form") {
       event.preventDefault();
-      if (state.editor.route && state.editor.active) {
+      if (state.editor.enabled && state.editor.active) {
         showSearchEditor();
         return;
       }
@@ -1384,27 +1791,42 @@ export const appScript = String.raw`
     if (event.target.id === "ui-search-form") {
       event.preventDefault();
       await saveSearchUi(event.target);
+      return;
+    }
+    if (event.target.id === "ui-element-form") {
+      event.preventDefault();
+      await saveElementUi(event.target);
     }
   }
 
   function onInput(event) {
-    if (!event.target.closest || !event.target.closest("#ui-search-form")) return;
-    var form = event.target.closest("#ui-search-form");
-    var data = new FormData(form);
-    applyUiConfig({
-      searchPlaceholder: data.get("searchPlaceholder"),
-      searchWidthPx: data.get("searchWidthPx")
-    });
-    var widthNumber = form.querySelector('input[name="searchWidthNumber"]');
-    var widthRange = form.querySelector('input[name="searchWidthPx"]');
-    if (widthNumber && widthRange && event.target.name === "searchWidthNumber") {
-      widthRange.value = String(clamp(Number(widthNumber.value), 240, 1100));
-      state.ui.searchWidthPx = Number(widthRange.value);
+    if (!event.target.closest) return;
+    var searchForm = event.target.closest("#ui-search-form");
+    if (searchForm) {
+      var data = new FormData(searchForm);
+      applyUiConfig({
+        searchPlaceholder: data.get("searchPlaceholder"),
+        searchWidthPx: data.get("searchWidthPx"),
+        editorOverrides: state.ui.editorOverrides
+      });
+      var widthNumber = searchForm.querySelector('input[name="searchWidthNumber"]');
+      var widthRange = searchForm.querySelector('input[name="searchWidthPx"]');
+      if (widthNumber && widthRange && event.target.name === "searchWidthNumber") {
+        widthRange.value = String(clamp(Number(widthNumber.value), 240, 1100));
+        state.ui.searchWidthPx = Number(widthRange.value);
+      }
+      if (widthNumber && widthRange && event.target.name === "searchWidthPx") {
+        widthNumber.value = widthRange.value;
+      }
+      renderHeader();
+      syncEditorChrome();
+      return;
     }
-    if (widthNumber && widthRange && event.target.name === "searchWidthPx") {
-      widthNumber.value = widthRange.value;
+    var elementForm = event.target.closest("#ui-element-form");
+    if (elementForm) {
+      previewElementUi(elementForm);
+      updateElementCssSnippet(elementForm);
     }
-    renderHeader();
   }
 
   document.addEventListener("change", async function (event) {
@@ -1450,6 +1872,8 @@ export const appScript = String.raw`
     await api("/api/logout", { method: "POST" });
     state.user = null;
     state.admin = null;
+    state.editor.enabled = false;
+    state.editor.active = false;
     toast("已退出");
     location.hash = "#/";
     await route();
@@ -1547,12 +1971,14 @@ export const appScript = String.raw`
       var payload = {
         ui: {
           searchPlaceholder: data.get("searchPlaceholder"),
-          searchWidthPx: width
+          searchWidthPx: width,
+          editorOverrides: state.ui.editorOverrides
         }
       };
       var saved = await api("/api/admin/site-settings", { method: "PATCH", body: payload });
       applyUiConfig(saved.ui);
       renderHeader();
+      syncEditorChrome();
       closeModal();
       toast("搜索栏已更新");
     } catch (error) {
