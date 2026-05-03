@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-soft-page-surfaces";
+const ASSET_VERSION = "20260503-unframed-pages";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -358,12 +358,17 @@ a { color: inherit; }
 .page-section {
   border: 0;
   border-radius: 0;
-  background: rgba(255, 255, 255, .58);
+  background: transparent;
   box-shadow: none;
 }
 
 .page-section + .page-section {
   margin-top: 8px;
+}
+
+.page-section .empty-state {
+  border-color: transparent;
+  background: transparent;
 }
 
 .filters {
@@ -528,7 +533,7 @@ a { color: inherit; }
 }
 
 .detail-cover {
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
   max-height: 440px;
   overflow: hidden;
