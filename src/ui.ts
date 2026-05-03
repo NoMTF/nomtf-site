@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260428-editor-explicit-fields";
+const ASSET_VERSION = "20260503-review-queue";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -783,6 +783,13 @@ a { color: inherit; }
   grid-template-columns: minmax(130px, 1fr) minmax(180px, 1fr) 100px 120px auto;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .status-pill,
 .nsfw-pill {
   border-radius: 8px;
@@ -1300,9 +1307,11 @@ export const appScript = String.raw`
       location.hash = "#/";
       return;
     }
+    var isAdmin = state.user && state.user.role === "admin";
     app.innerHTML =
       '<section class="panel detail-article">' +
-        '<h1>发布评级</h1>' +
+        '<h1>' + (isAdmin ? '发布评级' : '提交评级') + '</h1>' +
+        '<p class="post-summary">' + (isAdmin ? '管理员发布后会直接公开。' : '投稿会先进入审核队列，通过后才会公开显示。') + '</p>' +
         '<form id="compose-form" class="form-grid">' +
           '<div class="two-col">' +
             '<div class="field"><label>标题</label><input name="title" maxlength="120" required></div>' +
@@ -1319,7 +1328,7 @@ export const appScript = String.raw`
           '</div>' +
           '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会追加到末尾"></textarea></div>' +
           '<label class="post-meta"><input name="nsfw" type="checkbox"> NSFW / 激烈表达提示</label>' +
-          '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("plus") + '<span>发布</span></button><button class="ghost-button" type="button" data-action="home">取消</button></div>' +
+          '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("plus") + '<span>' + (isAdmin ? '发布' : '提交审核') + '</span></button><button class="ghost-button" type="button" data-action="home">取消</button></div>' +
         '</form>' +
       '</section>';
   }
@@ -1336,7 +1345,7 @@ export const appScript = String.raw`
     }
     app.innerHTML =
       '<section class="admin-grid">' +
-        '<div class="panel admin-section"><h1>管理员后台</h1><p class="post-summary">删除帖子、处理回复、限制访客、管理账号权限和调整页面文案。</p><div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div></div>' +
+        '<div class="panel admin-section"><h1>管理员后台</h1><p class="post-summary">审核投稿、删除帖子、处理回复、限制访客、管理账号权限和调整页面文案。</p><div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div></div>' +
         renderAdminPosts() +
         renderAdminComments() +
         renderAdminUsers() +
@@ -1345,15 +1354,38 @@ export const appScript = String.raw`
   }
 
   function renderAdminPosts() {
-    return '<section class="panel admin-section"><h2 class="section-title">帖子</h2><div class="table">' +
+    return '<section class="panel admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
       state.admin.posts.map(function (p) {
         return '<div class="table-row">' +
-          '<strong>' + esc(p.title) + '</strong>' +
+          '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
           '<span>等级 ' + esc(String(p.hazard_level)) + '</span>' +
-          '<span class="status-pill">' + esc(p.status) + '</span>' +
-          '<button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+          '<span class="status-pill">' + statusText(p.status) + '</span>' +
+          '<div class="table-actions">' + renderPostReviewActions(p) + '<button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
         '</div>';
       }).join("") + '</div></section>';
+  }
+
+  function renderPostReviewActions(post) {
+    if (post.status === "pending" || post.status === "rejected" || post.status === "hidden" || post.status === "draft") {
+      return '<button class="primary-button" data-action="admin-approve-post" data-id="' + escAttr(post.id) + '">' + icon("doc") + '<span>通过</span></button>' +
+        '<button class="ghost-button" data-action="admin-reject-post" data-id="' + escAttr(post.id) + '">退回</button>';
+    }
+    if (post.status === "published") {
+      return '<button class="ghost-button" data-action="admin-hide-post" data-id="' + escAttr(post.id) + '">隐藏</button>';
+    }
+    return "";
+  }
+
+  function statusText(status) {
+    var map = {
+      pending: "待审核",
+      published: "已公开",
+      hidden: "已隐藏",
+      rejected: "已退回",
+      draft: "草稿",
+      deleted: "已删除"
+    };
+    return esc(map[status] || status || "");
   }
 
   function renderAdminComments() {
@@ -1486,6 +1518,9 @@ export const appScript = String.raw`
       closeModal();
     }
     if (action === "accept-terms") await acceptTerms();
+    if (action === "admin-approve-post") await adminSetPostStatus(target.getAttribute("data-id"), "published");
+    if (action === "admin-reject-post") await adminSetPostStatus(target.getAttribute("data-id"), "rejected");
+    if (action === "admin-hide-post") await adminSetPostStatus(target.getAttribute("data-id"), "hidden");
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
     if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
     if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
@@ -2061,8 +2096,14 @@ export const appScript = String.raw`
         content: content
       };
       var created = await api("/api/posts", { method: "POST", body: payload });
-      toast("已发布");
-      location.hash = "#/post/" + encodeURIComponent(created.slug);
+      if (created.status === "published") {
+        toast("已发布");
+        location.hash = "#/post/" + encodeURIComponent(created.slug);
+      } else {
+        toast("已提交审核，等待管理员通过");
+        location.hash = "#/";
+        await route();
+      }
     } catch (error) {
       toast(error.message);
     }
@@ -2137,6 +2178,18 @@ export const appScript = String.raw`
       syncEditorChrome();
       closeModal();
       toast("搜索栏已更新");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function adminSetPostStatus(postId, status) {
+    try {
+      await api("/api/admin/posts/" + postId + "/status", { method: "PATCH", body: { status: status } });
+      toast(status === "published" ? "已通过审核" : (status === "rejected" ? "已退回投稿" : "状态已更新"));
+      await loadAdmin();
+      renderAdmin();
+      syncEditorChrome();
     } catch (error) {
       toast(error.message);
     }

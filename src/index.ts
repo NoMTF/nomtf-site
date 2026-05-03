@@ -6,6 +6,7 @@ import { appScript, renderBlockedPage, renderPage, styles } from "./ui";
 type Role = "user" | "admin";
 type UserStatus = "active" | "muted" | "banned";
 type PermissionLevel = "allow" | "muted" | "banned";
+type PostStatus = "draft" | "pending" | "published" | "hidden" | "rejected" | "deleted";
 
 type User = {
   id: string;
@@ -322,7 +323,9 @@ app.post("/api/posts", async (c) => {
   const requestedSlug = cleanText(body.slug, 90);
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
-  const status = body.status === "draft" ? "draft" : "published";
+  const status: PostStatus = user.role === "admin"
+    ? (body.status === "draft" ? "draft" : "published")
+    : "pending";
 
   if (!title || title.length < 2) {
     return c.json({ error: "标题太短了" }, 400);
@@ -345,7 +348,7 @@ app.post("/api/posts", async (c) => {
     .run();
 
   await syncTags(c.env.DB, id, tags);
-  return c.json({ ok: true, id, slug }, 201);
+  return c.json({ ok: true, id, slug, status }, 201);
 });
 
 app.patch("/api/posts/:id", async (c) => {
@@ -365,7 +368,9 @@ app.patch("/api/posts/:id", async (c) => {
   const nsfw = Boolean(body.nsfw);
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
-  const status = body.status === "draft" ? "draft" : "published";
+  const status: PostStatus = user.role === "admin"
+    ? cleanPostStatus(body.status, "published")
+    : "pending";
   if (!title || !content || !Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
     return c.json({ error: "帖子字段不完整" }, 400);
   }
@@ -376,7 +381,7 @@ app.patch("/api/posts/:id", async (c) => {
     WHERE id = ?
   `).bind(title, summary, content, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
   await syncTags(c.env.DB, post.id, tags);
-  return c.json({ ok: true });
+  return c.json({ ok: true, status });
 });
 
 app.post("/api/posts/:id/like", async (c) => {
@@ -460,13 +465,50 @@ app.get("/api/admin/posts", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
-    SELECT p.id, p.title, p.slug, p.hazard_level, p.nsfw, p.status, p.created_at, p.updated_at, u.username AS author_name
+    SELECT
+      p.id, p.title, p.slug, p.summary, p.hazard_level, p.nsfw, p.status,
+      p.created_at, p.updated_at, p.reviewed_at,
+      u.username AS author_name,
+      reviewer.username AS reviewed_by_name
     FROM posts p
     JOIN users u ON u.id = p.author_id
-    ORDER BY p.created_at DESC
+    LEFT JOIN users reviewer ON reviewer.id = p.reviewed_by
+    WHERE p.status != 'deleted'
+    ORDER BY
+      CASE p.status
+        WHEN 'pending' THEN 0
+        WHEN 'published' THEN 1
+        WHEN 'hidden' THEN 2
+        WHEN 'rejected' THEN 3
+        ELSE 4
+      END,
+      p.created_at DESC
     LIMIT 100
   `).all<Record<string, unknown>>();
   return c.json({ posts: result.results ?? [] });
+});
+
+app.patch("/api/admin/posts/:id/status", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const body = await readJson(c);
+  const status = cleanOptionalPostStatus(body.status);
+  if (!["pending", "published", "hidden", "rejected", "draft"].includes(status)) {
+    return c.json({ error: "审核状态不正确" }, 400);
+  }
+
+  const existing = await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status != 'deleted'")
+    .bind(c.req.param("id"))
+    .first<{ id: string }>();
+  if (!existing) return c.json({ error: "帖子不存在" }, 404);
+
+  const now = nowIso();
+  const reviewer = status === "pending" || status === "draft" ? null : user.id;
+  const reviewedAt = status === "pending" || status === "draft" ? null : now;
+  await c.env.DB.prepare("UPDATE posts SET status = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?")
+    .bind(status, reviewer, reviewedAt, now, existing.id)
+    .run();
+  return c.json({ ok: true, status });
 });
 
 app.delete("/api/admin/posts/:id", async (c) => {
@@ -975,6 +1017,20 @@ function cleanName(value: unknown): string {
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function cleanPostStatus(value: unknown, fallback: PostStatus): PostStatus {
+  const status = String(value ?? "").trim();
+  return ["draft", "pending", "published", "hidden", "rejected", "deleted"].includes(status)
+    ? status as PostStatus
+    : fallback;
+}
+
+function cleanOptionalPostStatus(value: unknown): PostStatus | "" {
+  const status = String(value ?? "").trim();
+  return ["draft", "pending", "published", "hidden", "rejected", "deleted"].includes(status)
+    ? status as PostStatus
+    : "";
 }
 
 function clampNumber(value: number, min: number, max: number, fallback: number): number {
