@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-mobile-ui";
+const ASSET_VERSION = "20260503-mobile-fit";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -69,10 +69,11 @@ export const styles = String.raw`
 
 * { box-sizing: border-box; }
 
-html { min-width: 320px; background: var(--bg); }
+html { min-width: 320px; background: var(--bg); overflow-x: hidden; }
 
 body {
   margin: 0;
+  overflow-x: hidden;
   color: var(--ink);
   font-family: Inter, "Segoe UI", Arial, "Microsoft YaHei", sans-serif;
   line-height: 1.5;
@@ -1008,12 +1009,8 @@ svg {
 
   .hero-lede {
     margin-top: 10px;
-    font-size: 15px;
-    line-height: 1.58;
-    display: -webkit-box;
-    -webkit-line-clamp: 4;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    font-size: 14px;
+    line-height: 1.65;
   }
 
   .hero-actions {
@@ -1021,10 +1018,23 @@ svg {
     gap: 8px;
   }
 
+  .hero-copy > .hero-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
   .hero-actions .primary-button,
   .hero-actions .ghost-button,
-  .hero-actions .danger-button {
-    flex: 1 1 auto;
+  .hero-actions .danger-button,
+  .hero-actions .plain-button {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .hero-actions span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .rating-board {
@@ -1032,22 +1042,21 @@ svg {
   }
 
   .scale-list {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    overflow-x: auto;
+    overflow-x: visible;
     padding-bottom: 2px;
-    scroll-snap-type: x proximity;
   }
 
   .scale-row {
-    flex: 0 0 96px;
+    min-width: 0;
     min-height: 82px;
     grid-template-columns: 1fr;
     justify-items: center;
     text-align: center;
     gap: 7px;
     padding: 9px 7px;
-    scroll-snap-align: start;
   }
 
   .scale-row .level-badge {
