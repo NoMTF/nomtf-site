@@ -45,6 +45,7 @@ type Variables = {
   visitorId: string;
   permission: PermissionLevel;
   ipHash: string;
+  ipAddress: string;
 };
 
 type RateLimitRule = {
@@ -80,6 +81,7 @@ const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
 const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
 const LOGIN_IP_LOCK_THRESHOLD = 20;
+const MAX_SEARCH_QUERY_LENGTH = 80;
 const WEAK_PASSWORD_PARTS = [
   "123456",
   "123456789",
@@ -181,6 +183,18 @@ app.get("/api/site-settings", async (c) => {
   });
 });
 
+app.get("/api/search/trends", async (c) => {
+  const limited = await enforceFixedWindowRateLimit(c, {
+    bucket: "search_trends_ip",
+    subject: ipSubject(c),
+    limit: 120,
+    windowSeconds: 60,
+    message: "搜索热榜刷新太频繁了，请稍后再试"
+  });
+  if (limited) return limited;
+  return c.json({ trends: await getSearchTrends(c.env.DB, 10) });
+});
+
 app.post("/api/register", async (c) => {
   const attemptLimited = await enforceFixedWindowRateLimit(c, {
     bucket: "register_attempt_ip",
@@ -220,12 +234,14 @@ app.post("/api/register", async (c) => {
   const role: Role = isFirstUser || isInviteAdmin ? "admin" : "user";
   const userId = crypto.randomUUID();
   const passwordHash = await hashPassword(password);
+  const ipAddress = c.get("ipAddress");
+  const ipHash = c.get("ipHash");
 
   try {
     await c.env.DB.prepare(
-      "INSERT INTO users (id, username, email, password_hash, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)"
+      "INSERT INTO users (id, username, email, password_hash, role, status, created_at, updated_at, last_ip, last_ip_hash, last_seen_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)"
     )
-      .bind(userId, username, email, passwordHash, role, now, now)
+      .bind(userId, username, email, passwordHash, role, now, now, ipAddress, ipHash, now)
       .run();
   } catch {
     return c.json({ error: "昵称或邮箱已经被占用" }, 409);
@@ -274,8 +290,8 @@ app.post("/api/login", async (c) => {
 
   await clearLoginFailures(c.env.DB, loginEmailSubject);
   const loginAt = nowIso();
-  await c.env.DB.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?")
-    .bind(loginAt, loginAt, user.id)
+  await c.env.DB.prepare("UPDATE users SET last_login_at = ?, last_ip = ?, last_ip_hash = ?, last_seen_at = ?, updated_at = ? WHERE id = ?")
+    .bind(loginAt, c.get("ipAddress"), c.get("ipHash"), loginAt, loginAt, user.id)
     .run();
   await createSession(c, user.id);
   const { password_hash: _, ...safeUser } = user;
@@ -385,6 +401,11 @@ app.get("/api/posts", async (c) => {
   const user = c.get("user");
   const subjectType = user ? "user" : "visitor";
   const subjectId = user?.id ?? visitorId;
+  if (q) {
+    c.executionCtx.waitUntil(recordSearchEvent(c, q).catch((error) => {
+      console.error(JSON.stringify({ level: "warn", message: "search event record failed", error: String(error) }));
+    }));
+  }
 
   const conditions = ["p.status = 'published'"];
   const params: Array<string | number> = [];
@@ -710,6 +731,44 @@ app.get("/api/admin/posts", async (c) => {
   return c.json({ posts: result.results ?? [] });
 });
 
+app.get("/api/admin/stats", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const [posts, users, searches] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT
+        COUNT(*) AS total_posts,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_posts,
+        SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published_posts
+      FROM posts
+      WHERE status != 'deleted'
+    `).first<Record<string, number>>(),
+    c.env.DB.prepare(`
+      SELECT
+        COUNT(*) AS total_users,
+        SUM(CASE WHEN status = 'banned' THEN 1 ELSE 0 END) AS banned_users,
+        SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS admin_users
+      FROM users
+    `).first<Record<string, number>>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS search_count FROM search_events WHERE created_at >= ?")
+      .bind(since24h)
+      .first<{ search_count: number }>()
+  ]);
+  return c.json({
+    stats: {
+      totalPosts: Number(posts?.total_posts ?? 0),
+      pendingPosts: Number(posts?.pending_posts ?? 0),
+      publishedPosts: Number(posts?.published_posts ?? 0),
+      totalUsers: Number(users?.total_users ?? 0),
+      bannedUsers: Number(users?.banned_users ?? 0),
+      adminUsers: Number(users?.admin_users ?? 0),
+      searches24h: Number(searches?.search_count ?? 0),
+      hotSearches: await getSearchTrends(c.env.DB, 8)
+    }
+  });
+});
+
 app.get("/api/admin/posts/:id", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
@@ -788,11 +847,12 @@ app.get("/api/admin/users", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
-    SELECT id, username, email, role, status, created_at
+    SELECT id, username, email, role, status, created_at, last_ip, last_ip_hash, last_seen_at, last_login_at,
+      COALESCE((SELECT COUNT(*) FROM sessions s WHERE s.user_id = users.id AND s.expires_at > ?), 0) AS session_count
     FROM users
     ORDER BY created_at DESC
     LIMIT 100
-  `).all<Record<string, unknown>>();
+  `).bind(nowIso()).all<Record<string, unknown>>();
   return c.json({ users: result.results ?? [] });
 });
 
@@ -864,6 +924,43 @@ app.delete("/api/admin/users/:id", async (c) => {
   await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetId).run();
   await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(targetId).run();
   return c.json({ ok: true });
+});
+
+app.post("/api/admin/users/:id/ban", async (c) => {
+  const admin = requireAdmin(c);
+  if (admin instanceof Response) return admin;
+  const targetId = c.req.param("id");
+  if (targetId === admin.id) return c.json({ error: "不能封禁自己" }, 400);
+  const target = await c.env.DB.prepare("SELECT id, role FROM users WHERE id = ?")
+    .bind(targetId)
+    .first<{ id: string; role: Role }>();
+  if (!target) return c.json({ error: "用户不存在" }, 404);
+  if (target.role === "admin" && await isLastAdmin(c.env.DB, target.id)) {
+    return c.json({ error: "不能封禁最后一个管理员" }, 400);
+  }
+  const now = nowIso();
+  await c.env.DB.prepare("UPDATE users SET status = 'banned', updated_at = ? WHERE id = ?")
+    .bind(now, targetId)
+    .run();
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/admin/users/:id/ban-ip", async (c) => {
+  const admin = requireAdmin(c);
+  if (admin instanceof Response) return admin;
+  const targetId = c.req.param("id");
+  const target = await c.env.DB.prepare("SELECT id, username, last_ip, last_ip_hash FROM users WHERE id = ?")
+    .bind(targetId)
+    .first<{ id: string; username: string; last_ip: string | null; last_ip_hash: string | null }>();
+  if (!target) return c.json({ error: "用户不存在" }, 404);
+  if (!target.last_ip_hash) return c.json({ error: "这个用户还没有记录到 IP" }, 400);
+  const now = nowIso();
+  await c.env.DB.prepare(`
+    INSERT INTO visitor_permissions (id, kind, subject, level, reason, expires_at, created_by, created_at)
+    VALUES (?, 'ip_hash', ?, 'banned', ?, NULL, ?, ?)
+  `).bind(crypto.randomUUID(), target.last_ip_hash, `一键 ban IP：${target.username} ${target.last_ip ?? ""}`.slice(0, 240), admin.id, now).run();
+  return c.json({ ok: true, ipHash: target.last_ip_hash });
 });
 
 app.post("/api/admin/users/:id/revoke-sessions", async (c) => {
@@ -975,6 +1072,12 @@ async function bindRequestContext(c: AppContext, next: Next) {
   c.set("user", user);
   c.set("permission", permission);
   c.set("ipHash", ipHash);
+  c.set("ipAddress", ip);
+  if (user) {
+    c.executionCtx.waitUntil(updateUserPresence(c, user).catch((error) => {
+      console.error(JSON.stringify({ level: "warn", message: "user presence update failed", error: String(error) }));
+    }));
+  }
 
   if (permission === "banned" && user?.role !== "admin") {
     if (c.req.path.startsWith("/api/")) {
@@ -1077,6 +1180,16 @@ async function resolvePermission(db: D1Database, user: User | null, visitorId: s
   if (levels.some((row) => row.level === "banned")) return "banned";
   if (levels.some((row) => row.level === "muted")) return "muted";
   return "allow";
+}
+
+async function updateUserPresence(c: AppContext, user: User): Promise<void> {
+  const ipAddress = c.get("ipAddress");
+  const ipHash = c.get("ipHash");
+  if (!ipHash) return;
+  const now = nowIso();
+  await c.env.DB.prepare("UPDATE users SET last_ip = ?, last_ip_hash = ?, last_seen_at = ? WHERE id = ?")
+    .bind(ipAddress, ipHash, now, user.id)
+    .run();
 }
 
 function requireActiveUser(c: AppContext): User | Response {
@@ -1240,6 +1353,31 @@ async function clearLoginFailures(db: D1Database, subject: string): Promise<void
   await db.prepare("DELETE FROM auth_failures WHERE subject = ?").bind(subject).run();
 }
 
+async function recordSearchEvent(c: AppContext, rawQuery: string): Promise<void> {
+  const query = normalizeSearchQuery(rawQuery);
+  if (!query) return;
+  await c.env.DB.prepare(`
+    INSERT INTO search_events (id, query, query_key, user_id, visitor_id, ip_hash, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(crypto.randomUUID(), query, searchQueryKey(query), c.get("user")?.id ?? null, c.get("visitorId"), c.get("ipHash"), nowIso()).run();
+}
+
+async function getSearchTrends(db: D1Database, limit: number): Promise<Array<{ query: string; count: number }>> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const result = await db.prepare(`
+    SELECT query, COUNT(*) AS count, MAX(created_at) AS latest_at
+    FROM search_events
+    WHERE created_at >= ?
+    GROUP BY query_key
+    ORDER BY count DESC, latest_at DESC
+    LIMIT ?
+  `).bind(since, Math.min(20, Math.max(1, limit))).all<{ query: string; count: number }>();
+  return (result.results ?? []).map((row) => ({
+    query: row.query,
+    count: Number(row.count ?? 0)
+  }));
+}
+
 function maybeScheduleRateLimitCleanup(c: AppContext, subject: string, windowStart: number) {
   const lastChar = subject.charCodeAt(subject.length - 1) || 0;
   if (windowStart % 600 !== 0 || lastChar % 16 !== 0) return;
@@ -1260,6 +1398,8 @@ async function cleanupExpiredRateLimitRows(db: D1Database, cutoff: string): Prom
     WHERE (locked_until IS NULL AND first_failed_at < ?)
       OR (locked_until IS NOT NULL AND locked_until < ?)
   `).bind(staleFailures, cutoff).run();
+  const staleSearches = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  await db.prepare("DELETE FROM search_events WHERE created_at < ?").bind(staleSearches).run();
 }
 
 async function readJson(c: AppContext): Promise<Record<string, unknown>> {
@@ -1588,6 +1728,14 @@ function cleanName(value: unknown): string {
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function normalizeSearchQuery(value: unknown): string {
+  return cleanText(value, MAX_SEARCH_QUERY_LENGTH).replace(/\s+/g, " ");
+}
+
+function searchQueryKey(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function cleanPostStatus(value: unknown, fallback: PostStatus): PostStatus {

@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-admin-edit";
+const ASSET_VERSION = "20260503-admin-tools-search";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -193,6 +193,108 @@ a { color: inherit; }
   background: transparent;
   color: var(--ink);
   font-size: 14px;
+}
+
+.search-shell {
+  position: relative;
+  min-width: 0;
+  width: min(100%, var(--search-width, 920px));
+}
+
+.search-shell .searchbar {
+  width: 100%;
+}
+
+.search-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  display: none;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 18px 42px rgba(53, 83, 128, .16);
+  padding: 12px;
+}
+
+.search-shell.is-open .search-panel {
+  display: grid;
+}
+
+.search-panel h3 {
+  margin: 0 0 8px;
+  color: #4d5669;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.search-panel .empty-state {
+  padding: 14px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.search-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.search-chip {
+  min-height: 30px;
+  border: 1px solid #d7e7f5;
+  border-radius: 8px;
+  background: #f6fbff;
+  color: #2c628f;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hot-search-list {
+  display: grid;
+  gap: 6px;
+}
+
+.hot-search-item {
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.hot-search-rank {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #ffd4e9, #bceaff);
+  font-weight: 900;
+}
+
+.hot-search-query {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.hot-search-count {
+  color: var(--muted);
 }
 
 .icon-button,
@@ -963,6 +1065,52 @@ a { color: inherit; }
   padding: 16px;
 }
 
+.admin-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 241, 248, .94), rgba(239, 248, 255, .96));
+  box-shadow: var(--shadow);
+}
+
+.admin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.admin-stat {
+  border: 1px solid rgba(216, 230, 247, .92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .82);
+  padding: 12px;
+}
+
+.admin-stat strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.admin-stat span {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-hotline {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .table {
   display: grid;
   gap: 8px;
@@ -977,12 +1125,42 @@ a { color: inherit; }
   padding-top: 10px;
 }
 
+.table-row.admin-post-row {
+  grid-template-columns: minmax(220px, 1fr) 90px 120px auto;
+}
+
 .table-row.permissions {
   grid-template-columns: 110px minmax(150px, 1fr) 100px minmax(150px, 1fr) auto;
 }
 
 .table-row.users {
-  grid-template-columns: minmax(130px, 1fr) minmax(180px, 1fr) 100px 120px auto;
+  grid-template-columns: minmax(150px, 1fr) minmax(170px, 1fr) minmax(150px, 1fr) 96px 110px auto;
+}
+
+.admin-user-main,
+.admin-ip-cell {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-user-main strong,
+.admin-ip-cell code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-ip-cell code {
+  font-size: 12px;
+  color: #2c628f;
+}
+
+.admin-ip-cell span,
+.admin-subline {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .table-actions {
@@ -1413,6 +1591,15 @@ svg {
     gap: 18px;
   }
 
+  .admin-hero {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .admin-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .admin-section {
     padding: 8px 2px;
   }
@@ -1446,6 +1633,7 @@ svg {
   }
 
   .table-row,
+  .table-row.admin-post-row,
   .table-row.permissions,
   .table-row.users {
     border-top: 1px solid rgba(216, 230, 247, .92);
@@ -1527,8 +1715,13 @@ svg {
 
   .two-col,
   .table-row,
+  .table-row.admin-post-row,
   .table-row.permissions,
   .table-row.users {
+    grid-template-columns: 1fr;
+  }
+
+  .search-panel {
     grid-template-columns: 1fr;
   }
 }
@@ -1546,6 +1739,12 @@ export const appScript = String.raw`
     post: null,
     comments: [],
     admin: null,
+    search: {
+      open: false,
+      history: [],
+      trends: [],
+      trendsLoaded: false
+    },
     uploadPreviewUrls: [],
     ui: {
       searchPlaceholder: "搜索物品、现象、标签",
@@ -1586,10 +1785,12 @@ export const appScript = String.raw`
   document.addEventListener("click", onClick);
   document.addEventListener("submit", onSubmit);
   document.addEventListener("input", onInput);
+  document.addEventListener("focusin", onFocusIn);
   document.addEventListener("mouseover", onEditorHover, true);
   document.addEventListener("mouseout", onEditorHoverOut, true);
 
   async function init() {
+    state.search.history = loadSearchHistory();
     renderHeader();
     showTermsIfNeeded();
     try {
@@ -1670,7 +1871,8 @@ export const appScript = String.raw`
     var isHomeRoute = (location.hash || "#/") === "#/";
     var searchClass = "searchbar" + (isHomeRoute ? "" : " searchbar-secondary") + (state.editor.enabled && state.editor.active ? " is-editor-selectable editor-target" : "");
     var searchAttrs = state.editor.enabled && state.editor.active ? ' data-edit-target="searchbar" data-edit-label="搜索栏"' : "";
-    var searchStyle = ' style="width:' + escAttr(String(searchWidth)) + 'px"';
+    var searchStyle = ' style="--search-width:' + escAttr(String(searchWidth)) + 'px"';
+    var searchShellClass = "search-shell" + (state.search.open ? " is-open" : "");
 
     header.innerHTML =
       '<div class="header-inner">' +
@@ -1678,12 +1880,89 @@ export const appScript = String.raw`
           '<span class="brand-mark">N</span>' +
           '<span class="brand-text"><span class="brand-name">NoMTF</span><span class="brand-cn">不药娘网</span></span>' +
         '</a>' +
-        '<form class="' + searchClass + '" id="search-form"' + searchAttrs + searchStyle + '>' +
-          '<input name="q" type="search" placeholder="' + escAttr(state.ui.searchPlaceholder) + '" value="' + esc(state.filters.q) + '" autocomplete="off">' +
-          '<button class="icon-button" type="submit" title="搜索">' + icon("search") + '</button>' +
-        '</form>' +
+        '<div class="' + searchShellClass + '"' + searchStyle + '>' +
+          '<form class="' + searchClass + '" id="search-form"' + searchAttrs + '>' +
+            '<input name="q" type="search" placeholder="' + escAttr(state.ui.searchPlaceholder) + '" value="' + esc(state.filters.q) + '" autocomplete="off">' +
+            '<button class="icon-button" type="submit" title="搜索">' + icon("search") + '</button>' +
+          '</form>' +
+          renderSearchPanel() +
+        '</div>' +
         '<nav class="nav-actions">' + userBlock + '</nav>' +
       '</div>';
+  }
+
+  function renderSearchPanel() {
+    var history = state.search.history || [];
+    var trends = state.search.trends || [];
+    return '<div class="search-panel">' +
+      '<div><h3>搜索历史</h3>' +
+        (history.length ? '<div class="search-chip-list">' + history.map(function (item) {
+          return '<button class="search-chip" data-action="search-suggestion" data-query="' + escAttr(item) + '">' + esc(item) + '</button>';
+        }).join("") + '</div>' : '<div class="empty-state">还没有搜索历史。</div>') +
+      '</div>' +
+      '<div><h3>热度排行</h3>' +
+        (trends.length ? '<div class="hot-search-list">' + trends.map(function (item, index) {
+          return '<button class="hot-search-item" data-action="search-suggestion" data-query="' + escAttr(item.query) + '">' +
+            '<span class="hot-search-rank">' + (index + 1) + '</span>' +
+            '<span class="hot-search-query">' + esc(item.query) + '</span>' +
+            '<span class="hot-search-count">' + esc(String(item.count)) + '</span>' +
+          '</button>';
+        }).join("") + '</div>' : '<div class="empty-state">热榜正在积累。</div>') +
+      '</div>' +
+    '</div>';
+  }
+
+  async function openSearchPanel() {
+    if (state.search.open && state.search.trendsLoaded) return;
+    state.search.open = true;
+    state.search.history = loadSearchHistory();
+    if (!state.search.trendsLoaded) {
+      try {
+        var data = await api("/api/search/trends");
+        state.search.trends = data.trends || [];
+      } catch (_) {
+        state.search.trends = [];
+      }
+      state.search.trendsLoaded = true;
+    }
+    renderHeader();
+    var input = document.querySelector('#search-form input[name="q"]');
+    if (input) input.focus();
+  }
+
+  function closeSearchPanel() {
+    if (!state.search.open) return;
+    state.search.open = false;
+    renderHeader();
+  }
+
+  async function applySearchSuggestion(query) {
+    query = String(query || "").trim();
+    if (!query) return;
+    state.filters.q = query;
+    saveSearchHistory(query);
+    closeSearchPanel();
+    location.hash = "#/";
+    await route();
+  }
+
+  function loadSearchHistory() {
+    try {
+      var parsed = JSON.parse(localStorage.getItem("nomtf_search_history") || "[]");
+      return Array.isArray(parsed) ? parsed.filter(Boolean).slice(0, 8) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveSearchHistory(query) {
+    query = String(query || "").trim().replace(/\s+/g, " ");
+    if (!query) return;
+    var next = [query].concat(loadSearchHistory().filter(function (item) {
+      return item.toLowerCase() !== query.toLowerCase();
+    })).slice(0, 8);
+    localStorage.setItem("nomtf_search_history", JSON.stringify(next));
+    state.search.history = next;
   }
 
   async function loadPosts() {
@@ -1706,11 +1985,13 @@ export const appScript = String.raw`
       state.admin = null;
       return;
     }
+    var stats = await api("/api/admin/stats");
     var posts = await api("/api/admin/posts");
     var comments = await api("/api/admin/comments");
     var permissions = await api("/api/admin/permissions");
     var users = await api("/api/admin/users");
     state.admin = {
+      stats: stats.stats || null,
       posts: posts.posts || [],
       comments: comments.comments || [],
       permissions: permissions.permissions || [],
@@ -1997,7 +2278,7 @@ export const appScript = String.raw`
     }
     app.innerHTML =
       '<section class="admin-grid">' +
-        '<div class="page-section admin-section"><h1>管理员后台</h1><p class="post-summary">审核投稿、删除帖子、处理回复、限制访客、管理账号权限和调整页面文案。</p><div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div></div>' +
+        renderAdminOverview() +
         renderAdminPosts() +
         renderAdminComments() +
         renderAdminUsers() +
@@ -2005,10 +2286,35 @@ export const appScript = String.raw`
       '</section>';
   }
 
+  function renderAdminOverview() {
+    var stats = state.admin.stats || {};
+    var hot = stats.hotSearches || [];
+    return '<div class="page-section admin-section admin-hero">' +
+      '<div>' +
+        '<h1>管理员后台</h1>' +
+        '<p class="post-summary">审核投稿、管理内容、封禁账号/IP、查看搜索热度和维护站点界面。</p>' +
+        '<div class="admin-stat-grid">' +
+          adminStat(stats.pendingPosts || 0, "待审核") +
+          adminStat(stats.totalPosts || 0, "帖子总数") +
+          adminStat(stats.totalUsers || 0, "用户总数") +
+          adminStat(stats.searches24h || 0, "24h 搜索") +
+        '</div>' +
+        (hot.length ? '<div class="admin-hotline">' + hot.map(function (item, index) {
+          return '<button class="search-chip" data-action="search-suggestion" data-query="' + escAttr(item.query) + '">' + (index + 1) + '. ' + esc(item.query) + ' · ' + esc(String(item.count)) + '</button>';
+        }).join("") + '</div>' : '') +
+      '</div>' +
+      '<div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div>' +
+    '</div>';
+  }
+
+  function adminStat(value, label) {
+    return '<div class="admin-stat"><strong>' + esc(String(value)) + '</strong><span>' + esc(label) + '</span></div>';
+  }
+
   function renderAdminPosts() {
     return '<section class="page-section admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
       state.admin.posts.map(function (p) {
-        return '<div class="table-row">' +
+        return '<div class="table-row admin-post-row">' +
           '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
           '<span>等级 ' + esc(String(p.hazard_level)) + '</span>' +
           '<span class="status-pill">' + statusText(p.status) + '</span>' +
@@ -2056,14 +2362,18 @@ export const appScript = String.raw`
     return '<section class="page-section admin-section"><h2 class="section-title">用户</h2><div class="table">' +
       state.admin.users.map(function (u) {
         return '<div class="table-row users">' +
-          '<strong>' + esc(u.username) + '</strong>' +
-          '<span>' + esc(u.email) + '</span>' +
+          '<div class="admin-user-main"><strong>' + esc(u.username) + '</strong><span class="admin-subline">' + esc(u.email) + '</span></div>' +
+          '<div class="admin-ip-cell"><code>' + esc(u.last_ip || "未记录") + '</code><span>' + (u.last_seen_at ? "最近 " + dateText(u.last_seen_at) : "等待用户下次访问") + '</span></div>' +
+          '<span class="admin-subline">' + esc(u.session_count || 0) + ' 个会话</span>' +
           '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
           '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
-          '<span class="admin-meta">' + dateText(u.created_at) + '</span>' +
-          '<button class="ghost-button" data-action="admin-edit-user" data-id="' + escAttr(u.id) + '">' + icon("doc") + '<span>编辑</span></button>' +
-          '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
-          '<button class="danger-button" data-action="admin-delete-user" data-id="' + escAttr(u.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+          '<div class="table-actions">' +
+            '<button class="danger-button" data-action="admin-ban-user" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban人</span></button>' +
+            '<button class="danger-button" data-action="admin-ban-ip" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban IP</span></button>' +
+            '<button class="ghost-button" data-action="admin-edit-user" data-id="' + escAttr(u.id) + '">' + icon("doc") + '<span>编辑</span></button>' +
+            '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
+            '<button class="danger-button" data-action="admin-delete-user" data-id="' + escAttr(u.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+          '</div>' +
         '</div>';
       }).join("") + '</div></section>';
   }
@@ -2092,11 +2402,18 @@ export const appScript = String.raw`
   }
 
   async function onClick(event) {
+    if (!event.target.closest || !event.target.closest(".search-shell")) {
+      closeSearchPanel();
+    }
     var target = event.target.closest("[data-action]");
     if (!target) return;
     var action = target.getAttribute("data-action");
     if (action === "home") {
       location.hash = "#/";
+    }
+    if (action === "search-suggestion") {
+      await applySearchSuggestion(target.getAttribute("data-query") || "");
+      return;
     }
     if (action === "auth") showAuth("login");
     if (action === "account") showAccountSecurity();
@@ -2183,6 +2500,8 @@ export const appScript = String.raw`
     if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
     if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
     if (action === "admin-edit-user") showAdminUserEditor(target.getAttribute("data-id"));
+    if (action === "admin-ban-user") await adminBanUser(target.getAttribute("data-id"));
+    if (action === "admin-ban-ip") await adminBanIp(target.getAttribute("data-id"));
     if (action === "admin-revoke-sessions") await adminRevokeSessions(target.getAttribute("data-id"));
     if (action === "admin-delete-user") await adminDeleteUser(target.getAttribute("data-id"));
   }
@@ -2611,6 +2930,8 @@ export const appScript = String.raw`
         return;
       }
       state.filters.q = new FormData(event.target).get("q").trim();
+      if (state.filters.q) saveSearchHistory(state.filters.q);
+      closeSearchPanel();
       location.hash = "#/";
       await route();
       return;
@@ -2693,6 +3014,12 @@ export const appScript = String.raw`
     if (elementForm) {
       previewElementUi(elementForm);
       updateElementCssSnippet(elementForm);
+    }
+  }
+
+  async function onFocusIn(event) {
+    if (event.target && event.target.closest && event.target.closest("#search-form")) {
+      await openSearchPanel();
     }
   }
 
@@ -3060,6 +3387,7 @@ export const appScript = String.raw`
           '<form id="admin-user-edit-form" class="form-grid" data-id="' + escAttr(user.id) + '">' +
             '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required value="' + escAttr(user.username || "") + '"></div>' +
             '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
+            '<div class="field"><label>最近 IP</label><input readonly value="' + escAttr(user.last_ip || "未记录") + '"><span class="field-hint">Ban IP 会按 IP 指纹执行，避免明文 IP 变化造成误操作。</span></div>' +
             '<div class="two-col">' +
               '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>' +
               '<div class="field"><label>状态</label><select name="status"><option value="active" ' + selected(user.status, "active") + '>active</option><option value="muted" ' + selected(user.status, "muted") + '>muted</option><option value="banned" ' + selected(user.status, "banned") + '>banned</option></select></div>' +
@@ -3117,6 +3445,26 @@ export const appScript = String.raw`
       });
       closeModal();
       toast("用户已保存");
+      await route();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function adminBanUser(userId) {
+    try {
+      await api("/api/admin/users/" + userId + "/ban", { method: "POST" });
+      toast("已 Ban 用户并踢下线");
+      await route();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function adminBanIp(userId) {
+    try {
+      await api("/api/admin/users/" + userId + "/ban-ip", { method: "POST" });
+      toast("已 Ban 该用户最近 IP");
       await route();
     } catch (error) {
       toast(error.message);
