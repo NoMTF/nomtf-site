@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-media-assets";
+const ASSET_VERSION = "20260503-rating-art";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -335,15 +335,16 @@ a { color: inherit; }
 }
 
 .scale-row {
-  min-height: 52px;
+  min-height: 88px;
   border: 1px solid var(--soft-line);
   border-radius: 8px;
   display: grid;
-  grid-template-columns: 42px 1fr;
+  grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
   background: #fff;
+  overflow: hidden;
 }
 
 .level-badge {
@@ -362,12 +363,32 @@ a { color: inherit; }
 .level-4 { background: #df7a38; }
 .level-5 { background: #d94f65; }
 
+.scale-thumb-wrap {
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #fff0f8, #e8f7ff);
+}
+
+.scale-thumb {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.scale-copy {
+  min-width: 0;
+}
+
 .scale-row strong {
   display: block;
   font-size: 14px;
 }
 
-.scale-row span {
+.scale-copy span {
   display: block;
   color: var(--muted);
   font-size: 12px;
@@ -1094,7 +1115,7 @@ svg {
 
   .scale-row {
     min-width: 0;
-    min-height: 82px;
+    min-height: 116px;
     grid-template-columns: 1fr;
     justify-items: center;
     text-align: center;
@@ -1102,16 +1123,16 @@ svg {
     padding: 9px 7px;
   }
 
-  .scale-row .level-badge {
-    width: 32px;
-    height: 32px;
+  .scale-thumb-wrap {
+    width: 62px;
+    height: 62px;
   }
 
   .scale-row strong {
     font-size: 13px;
   }
 
-  .scale-row span span {
+  .scale-copy span {
     display: none;
   }
 
@@ -1666,8 +1687,8 @@ export const appScript = String.raw`
   function levelRow(key) {
     var item = levels[key];
     return '<button class="scale-row" data-action="filter-level" data-level="' + key + '">' +
-      '<span class="level-badge level-' + key + '">' + item[0] + '</span>' +
-      '<span><strong>' + item[1] + '</strong><span>' + item[2] + '</span></span>' +
+      '<span class="scale-thumb-wrap"><img class="scale-thumb" src="' + escAttr(siteAssets.levelCovers[key]) + '" alt="' + escAttr(item[0] + '级') + '"></span>' +
+      '<span class="scale-copy"><strong>' + item[1] + '</strong><span>' + item[2] + '</span></span>' +
     '</button>';
   }
 
