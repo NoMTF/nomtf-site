@@ -35,6 +35,10 @@ type ElementOverride = {
   text?: string;
   placeholderChanged?: boolean;
   placeholder?: string;
+  imageChanged?: boolean;
+  imageSrc?: string;
+  imageAltChanged?: boolean;
+  imageAlt?: string;
   styleKeys: ElementStyleKey[];
   styles: Partial<Record<ElementStyleKey, string>>;
 };
@@ -1672,7 +1676,18 @@ function sanitizeEditorOverrides(value: unknown): ElementOverride[] {
       override.placeholderChanged = true;
       override.placeholder = cleanText(raw.placeholder, 160);
     }
-    if (!Object.keys(override.styles).length && !override.textChanged && !override.placeholderChanged) {
+    if (raw.imageChanged === true && typeof raw.imageSrc === "string") {
+      const imageSrc = cleanImageSource(raw.imageSrc);
+      if (imageSrc) {
+        override.imageChanged = true;
+        override.imageSrc = imageSrc;
+      }
+    }
+    if (raw.imageAltChanged === true && typeof raw.imageAlt === "string") {
+      override.imageAltChanged = true;
+      override.imageAlt = cleanText(raw.imageAlt, 160);
+    }
+    if (!Object.keys(override.styles).length && !override.textChanged && !override.placeholderChanged && !override.imageChanged && !override.imageAltChanged) {
       continue;
     }
     overrides.push(override);
@@ -1724,6 +1739,21 @@ function cleanCssLength(value: unknown): string {
 function cleanCssColor(value: unknown): string {
   const text = String(value ?? "").trim();
   return /^#[0-9a-f]{6}$/i.test(text) || /^(transparent|inherit|unset|currentColor)$/i.test(text) ? text : "";
+}
+
+function cleanImageSource(value: unknown): string {
+  const text = cleanText(value, 600).replace(/[\u0000-\u001f\u007f]/g, "");
+  if (!text) return "";
+  if (/^\/(?:media|assets)\/[^\s"'<>\\]{1,560}$/i.test(text)) return text;
+  try {
+    const url = new URL(text);
+    if (url.protocol === "https:" && !url.username && !url.password && url.href.length <= 600) {
+      return url.href;
+    }
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 async function syncTags(db: D1Database, postId: string, tags: string[]) {

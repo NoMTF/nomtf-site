@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260504-categories-pins";
+const ASSET_VERSION = "20260504-visual-image-upload";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -1162,6 +1162,27 @@ a { color: inherit; }
   padding: 14px;
 }
 
+.editor-image-field {
+  gap: 10px;
+}
+
+.editor-image-preview {
+  min-height: 160px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: var(--surface-blue);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.editor-image-preview img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  display: block;
+}
+
 .admin-section {
   padding: 16px;
 }
@@ -1879,7 +1900,8 @@ export const appScript = String.raw`
       selected: "",
       element: null,
       hover: null,
-      preview: null
+      preview: null,
+      imagePreviewUrl: ""
     }
   };
 
@@ -2251,6 +2273,14 @@ export const appScript = String.raw`
       }
       if (override.placeholderChanged === true && typeof override.placeholder === "string" && "placeholder" in node) {
         node.setAttribute("placeholder", override.placeholder);
+      }
+      if (isImageElement(node)) {
+        if (override.imageChanged === true && typeof override.imageSrc === "string") {
+          node.setAttribute("src", override.imageSrc);
+        }
+        if (override.imageAltChanged === true && typeof override.imageAlt === "string") {
+          node.setAttribute("alt", override.imageAlt);
+        }
       }
       applyElementStyles(node, override.styles || {}, override.styleKeys || Object.keys(override.styles || {}));
     });
@@ -2786,6 +2816,10 @@ export const appScript = String.raw`
     return !/^(INPUT|TEXTAREA|SELECT|IMG|SVG|PATH)$/i.test(node.tagName);
   }
 
+  function isImageElement(node) {
+    return Boolean(node && /^IMG$/i.test(node.tagName || ""));
+  }
+
   function showElementEditor(element) {
     var selector = buildElementSelector(element);
     var existing = findElementOverride(selector);
@@ -2793,6 +2827,7 @@ export const appScript = String.raw`
     var rect = element.getBoundingClientRect();
     var styles = existing && existing.styles ? existing.styles : {};
     beginEditorPreview(element);
+    var canImage = isImageElement(element);
     var textNow = canEditText(element) ? String(element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500) : "";
     var placeholderNow = ("placeholder" in element) ? element.getAttribute("placeholder") || "" : "";
     var textValue = existing?.textChanged === true && typeof existing?.text === "string" ? existing.text : "";
@@ -2804,14 +2839,16 @@ export const appScript = String.raw`
     var placeholderField = supportsPlaceholder
       ? '<div class="field"><label>placeholder</label><input name="placeholder" maxlength="160" placeholder="' + escAttr(placeholderNow || "留空则保持原提示") + '" value="' + escAttr(placeholderValue) + '"><span class="field-hint">留空不改提示文字。</span></div>'
       : "";
+    var imageField = canImage ? renderElementImageField(element, existing) : "";
     showModal(
       '<div class="modal large">' +
         '<div class="modal-head"><h2>编辑元素</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
         '<div class="modal-body">' +
-          '<form id="ui-element-form" class="form-grid" data-can-text="' + (canEditText(element) ? "true" : "false") + '">' +
+          '<form id="ui-element-form" class="form-grid" data-can-text="' + (canEditText(element) ? "true" : "false") + '" data-can-image="' + (canImage ? "true" : "false") + '">' +
             '<div class="field"><label>选择器</label><input name="selector" readonly value="' + escAttr(selector) + '"></div>' +
             '<p class="field-hint">默认不覆盖原样式。只填写你要改的项目，留空就继续沿用网站原来的 CSS。</p>' +
             '<div class="two-col">' + textField + placeholderField + '</div>' +
+            imageField +
             '<div class="two-col">' +
               numberField("宽度", "widthPx", styleValue(styles, "width"), cssPxToNumber("", rect.width)) +
               numberField("高度", "heightPx", styleValue(styles, "height"), cssPxToNumber("", rect.height)) +
@@ -2837,6 +2874,22 @@ export const appScript = String.raw`
     updateElementCssSnippet(document.getElementById("ui-element-form"));
   }
 
+  function renderElementImageField(element, existing) {
+    var currentSrc = element.getAttribute("src") || "";
+    var currentAlt = element.getAttribute("alt") || "";
+    var overrideSrc = existing?.imageChanged === true && typeof existing?.imageSrc === "string" ? existing.imageSrc : "";
+    var overrideAlt = existing?.imageAltChanged === true && typeof existing?.imageAlt === "string" ? existing.imageAlt : "";
+    var previewSrc = overrideSrc || currentSrc;
+    return '<div class="field editor-image-field">' +
+      '<label>图片替换</label>' +
+      '<div class="editor-image-preview"><img id="ui-image-preview" src="' + escAttr(previewSrc) + '" alt="图片预览"></div>' +
+      '<input name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif">' +
+      '<input name="imageSrc" maxlength="600" placeholder="' + escAttr(currentSrc || "也可以粘贴 /media/... 或 https:// 图片地址") + '" value="' + escAttr(overrideSrc) + '">' +
+      '<input name="imageAlt" maxlength="160" placeholder="' + escAttr(currentAlt || "图片说明，可留空") + '" value="' + escAttr(overrideAlt) + '">' +
+      '<span class="field-hint">选择文件后点保存会先上传到 R2，再替换这个图片；不选文件时可以手动填图片地址。</span>' +
+    '</div>';
+  }
+
   function numberField(label, name, value, current) {
     var number = parseFloat(String(value || ""));
     return '<div class="field"><label>' + label + '</label><input name="' + name + '" type="number" min="0" max="1600" step="1" placeholder="当前约 ' + escAttr(String(Math.round(Number(current || 0)))) + 'px" value="' + (Number.isFinite(number) ? escAttr(String(Math.round(number))) : "") + '"><span class="field-hint">留空保持原值。</span></div>';
@@ -2857,11 +2910,14 @@ export const appScript = String.raw`
   }
 
   function beginEditorPreview(element) {
+    revokeEditorImagePreviewUrl();
     state.editor.preview = {
       element: element,
       styles: captureInlineStyles(element),
       text: canEditText(element) ? element.textContent : null,
-      placeholder: "placeholder" in element ? element.getAttribute("placeholder") : null
+      placeholder: "placeholder" in element ? element.getAttribute("placeholder") : null,
+      imageSrc: isImageElement(element) ? element.getAttribute("src") : null,
+      imageAlt: isImageElement(element) ? element.getAttribute("alt") : null
     };
   }
 
@@ -2886,6 +2942,13 @@ export const appScript = String.raw`
     if (preview.placeholder !== null && "placeholder" in preview.element) {
       preview.element.setAttribute("placeholder", preview.placeholder);
     }
+    if (preview.imageSrc !== null && isImageElement(preview.element)) {
+      preview.element.setAttribute("src", preview.imageSrc || "");
+    }
+    if (preview.imageAlt !== null && isImageElement(preview.element)) {
+      preview.element.setAttribute("alt", preview.imageAlt || "");
+    }
+    revokeEditorImagePreviewUrl();
     state.editor.preview = null;
   }
 
@@ -3004,6 +3067,18 @@ export const appScript = String.raw`
       override.placeholderChanged = true;
       override.placeholder = placeholder;
     }
+    if (form.getAttribute("data-can-image") === "true") {
+      var imageSrc = String(data.get("imageSrc") || "").trim().slice(0, 600);
+      var imageAlt = String(data.get("imageAlt") || "").trim().slice(0, 160);
+      if (imageSrc) {
+        override.imageChanged = true;
+        override.imageSrc = imageSrc;
+      }
+      if (imageAlt) {
+        override.imageAltChanged = true;
+        override.imageAlt = imageAlt;
+      }
+    }
     return override;
   }
 
@@ -3037,6 +3112,12 @@ export const appScript = String.raw`
     if (preview.placeholder !== null && "placeholder" in preview.element) {
       preview.element.setAttribute("placeholder", preview.placeholder);
     }
+    if (preview.imageSrc !== null && isImageElement(preview.element)) {
+      preview.element.setAttribute("src", preview.imageSrc || "");
+    }
+    if (preview.imageAlt !== null && isImageElement(preview.element)) {
+      preview.element.setAttribute("alt", preview.imageAlt || "");
+    }
   }
 
   function updateElementCssSnippet(form) {
@@ -3046,7 +3127,13 @@ export const appScript = String.raw`
     Object.keys(override.styles).forEach(function (key) {
       lines.push("  " + cssPropertyName(key) + ": " + override.styles[key] + ";");
     });
-    if (!Object.keys(override.styles).length) {
+    if (override.imageChanged) {
+      lines.push("  /* 图片地址: " + override.imageSrc + " */");
+    }
+    if (override.imageAltChanged) {
+      lines.push("  /* 图片说明: " + override.imageAlt + " */");
+    }
+    if (!Object.keys(override.styles).length && !override.imageChanged && !override.imageAltChanged) {
       lines.push("  /* 未填写样式，保存后不会覆盖原 CSS */");
     }
     lines.push("}");
@@ -3058,8 +3145,26 @@ export const appScript = String.raw`
     return key.replace(/[A-Z]/g, function (char) { return "-" + char.toLowerCase(); });
   }
 
+  async function prepareElementImageUpload(form) {
+    if (form.getAttribute("data-can-image") !== "true") return;
+    var fileInput = form.querySelector('input[name="imageFile"]');
+    var file = selectedInputFiles(fileInput)[0];
+    if (!file) return;
+    validateSelectedImages([file]);
+    toast("正在上传替换图片");
+    var uploaded = await uploadFile(file);
+    var srcInput = form.querySelector('input[name="imageSrc"]');
+    var altInput = form.querySelector('input[name="imageAlt"]');
+    if (srcInput) srcInput.value = uploaded.url;
+    if (altInput && !String(altInput.value || "").trim()) {
+      altInput.value = (file.name || "图片").replace(/[\\[\\]()]/g, "").slice(0, 160);
+    }
+    updateEditorImagePreview(form, uploaded.url);
+  }
+
   async function saveElementUi(form) {
     try {
+      await prepareElementImageUpload(form);
       var override = collectElementOverride(form);
       if (!override.selector) throw new Error("没有选中元素");
       if (!hasOverrideChanges(override)) throw new Error("还没有填写要保存的改动");
@@ -3070,10 +3175,11 @@ export const appScript = String.raw`
       var saved = await api("/api/admin/site-settings", { method: "PATCH", body: { ui: currentUiPayload(overrides) } });
       applyUiConfig(saved.ui);
       state.editor.preview = null;
+      revokeEditorImagePreviewUrl();
       renderHeader();
       syncEditorChrome();
       closeModal();
-      toast("元素样式已保存");
+      toast("元素设置已保存");
     } catch (error) {
       toast(error.message);
     }
@@ -3083,7 +3189,9 @@ export const appScript = String.raw`
     return Boolean(
       Object.keys(override.styles || {}).length ||
       override.textChanged === true ||
-      override.placeholderChanged === true
+      override.placeholderChanged === true ||
+      override.imageChanged === true ||
+      override.imageAltChanged === true
     );
   }
 
@@ -3216,6 +3324,9 @@ export const appScript = String.raw`
     }
     var elementForm = event.target.closest("#ui-element-form");
     if (elementForm) {
+      if (event.target.name === "imageSrc") {
+        updateEditorImagePreview(elementForm, String(event.target.value || event.target.getAttribute("placeholder") || "").trim());
+      }
       previewElementUi(elementForm);
       updateElementCssSnippet(elementForm);
     }
@@ -3231,6 +3342,10 @@ export const appScript = String.raw`
     var target = event.target;
     if (target.closest && target.closest("#compose-form") && (target.name === "cover" || target.name === "bodyImages")) {
       updateUploadPreviews();
+      return;
+    }
+    if (target.closest && target.closest("#ui-element-form") && target.name === "imageFile") {
+      updateEditorImageFilePreview(target.closest("#ui-element-form"));
       return;
     }
     var action = target.getAttribute && target.getAttribute("data-action");
@@ -3332,6 +3447,41 @@ export const appScript = String.raw`
     var url = URL.createObjectURL(file);
     state.uploadPreviewUrls.push(url);
     return url;
+  }
+
+  function updateEditorImageFilePreview(form) {
+    if (!form) return;
+    var fileInput = form.querySelector('input[name="imageFile"]');
+    var file = selectedInputFiles(fileInput)[0];
+    revokeEditorImagePreviewUrl();
+    if (!file) {
+      previewElementUi(form);
+      updateElementCssSnippet(form);
+      return;
+    }
+    var url = URL.createObjectURL(file);
+    state.editor.imagePreviewUrl = url;
+    var srcInput = form.querySelector('input[name="imageSrc"]');
+    var altInput = form.querySelector('input[name="imageAlt"]');
+    if (srcInput) srcInput.value = url;
+    if (altInput && !String(altInput.value || "").trim()) {
+      altInput.value = (file.name || "图片").replace(/[\\[\\]()]/g, "").slice(0, 160);
+    }
+    updateEditorImagePreview(form, url);
+    previewElementUi(form);
+    updateElementCssSnippet(form);
+  }
+
+  function updateEditorImagePreview(form, src) {
+    var preview = form ? form.querySelector("#ui-image-preview") : document.getElementById("ui-image-preview");
+    if (preview) preview.setAttribute("src", src || "");
+  }
+
+  function revokeEditorImagePreviewUrl() {
+    if (state.editor.imagePreviewUrl) {
+      URL.revokeObjectURL(state.editor.imagePreviewUrl);
+      state.editor.imagePreviewUrl = "";
+    }
   }
 
   function clearUploadPreviewUrls() {
@@ -3804,6 +3954,7 @@ export const appScript = String.raw`
   }
 
   function closeModal() {
+    revokeEditorImagePreviewUrl();
     document.getElementById("modal-root").innerHTML = "";
   }
 
