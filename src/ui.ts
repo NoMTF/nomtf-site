@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-post-views-hot";
+const ASSET_VERSION = "20260504-categories-pins";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -644,6 +644,10 @@ a { color: inherit; }
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 6px;
+}
+
+.category-tabs {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .segment {
@@ -1853,7 +1857,7 @@ export const appScript = String.raw`
     termsVersion: "2026-04-28",
     posts: [],
     hotPosts: [],
-    filters: { q: "", level: "", tag: "" },
+    filters: { q: "", level: "", tag: "", category: "rating" },
     post: null,
     comments: [],
     admin: null,
@@ -1949,6 +1953,14 @@ export const appScript = String.raw`
     clearEditorHover();
     document.body.classList.toggle("editor-selecting", state.editor.enabled && state.editor.active);
     renderHeader();
+    if (hash === "#/about" || hash === "#/talk") {
+      state.filters.category = hash === "#/about" ? "about" : "talk";
+      state.filters.level = "";
+      await loadPosts();
+      renderHome();
+      syncEditorChrome();
+      return;
+    }
     if (hash.indexOf("#/post/") === 0) {
       var slug = decodeURIComponent(hash.replace("#/post/", ""));
       await loadPost(slug);
@@ -1967,6 +1979,7 @@ export const appScript = String.raw`
       syncEditorChrome();
       return;
     }
+    if (hash === "#/") state.filters.category = state.filters.category || "rating";
     await loadPosts();
     renderHome();
     syncEditorChrome();
@@ -2087,6 +2100,7 @@ export const appScript = String.raw`
   async function loadPosts() {
     var params = new URLSearchParams();
     if (state.filters.q) params.set("q", state.filters.q);
+    if (state.filters.category) params.set("category", state.filters.category);
     if (state.filters.level) params.set("level", state.filters.level);
     if (state.filters.tag) params.set("tag", state.filters.tag);
     var data = await api("/api/posts?" + params.toString());
@@ -2285,7 +2299,15 @@ export const appScript = String.raw`
     var buttons = Object.keys(levels).map(function (key) {
       return '<button class="segment ' + (state.filters.level === key ? "active" : "") + '" data-action="filter-level" data-level="' + key + '">' + key + '</button>';
     }).join("");
+    var categoryButtons = [
+      ["rating", "评级"],
+      ["about", "关于页"],
+      ["talk", "杂谈页"]
+    ].map(function (item) {
+      return '<button class="segment ' + (state.filters.category === item[0] ? "active" : "") + '" data-action="filter-category" data-category="' + item[0] + '">' + item[1] + '</button>';
+    }).join("");
     return '<aside class="panel filters">' +
+      '<div class="filter-group"><label>分类</label><div class="segmented category-tabs">' + categoryButtons + '</div></div>' +
       '<div class="filter-group"><label>等级筛选</label><div class="segmented">' + buttons + '</div></div>' +
       '<div class="filter-group"><label>标签</label><input id="tag-filter" value="' + esc(state.filters.tag) + '" placeholder="输入标签名"></div>' +
       '<button class="ghost-button" data-action="apply-tag">' + icon("search") + '<span>筛选</span></button> ' +
@@ -2310,6 +2332,8 @@ export const appScript = String.raw`
       '<div class="post-body">' +
         '<div class="post-meta">' +
           '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
+          '<span class="status-pill">' + categoryText(post.category) + '</span>' +
+          (post.pinnedAt ? '<span class="status-pill">置顶</span>' : '') +
           '<span>' + esc(post.authorName) + '</span>' +
           '<span>' + dateText(post.createdAt) + '</span>' +
           (post.nsfw ? '<span class="nsfw-pill">NSFW</span>' : '') +
@@ -2343,6 +2367,8 @@ export const appScript = String.raw`
         '<article class="page-section detail-article">' +
           '<div class="detail-meta">' +
             '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
+            '<span class="status-pill">' + categoryText(post.category) + '</span>' +
+            (post.pinnedAt ? '<span class="status-pill">置顶</span>' : '') +
             '<span>' + esc(post.authorName) + '</span>' +
             '<span>' + dateText(post.createdAt) + '</span>' +
             '<span class="mini-stat">' + icon("eye") + '<span class="mini-stat-value">' + esc(String(post.viewCount || 0)) + '</span></span>' +
@@ -2365,11 +2391,8 @@ export const appScript = String.raw`
   }
 
   function renderCommentForm(postId) {
-    if (!state.user) {
-      return '<div class="empty-state"><button class="primary-button" data-action="auth">' + icon("user") + '<span>登录后回复</span></button></div>';
-    }
     return '<form id="comment-form" class="form-grid" data-post-id="' + escAttr(postId) + '">' +
-      '<div class="field"><textarea name="content" maxlength="4000" placeholder="写一条回复"></textarea></div>' +
+      '<div class="field"><textarea name="content" maxlength="200" required placeholder="写一条回复（最多 200 字，间隔 5 秒）"></textarea></div>' +
       '<div><button class="primary-button" type="submit">' + icon("comment") + '<span>发送回复</span></button></div>' +
     '</form>';
   }
@@ -2401,6 +2424,7 @@ export const appScript = String.raw`
             '<div class="field"><label>标题</label><input name="title" maxlength="120" required></div>' +
             '<div class="field"><label>自定义 slug</label><input name="slug" maxlength="90" placeholder="可留空"></div>' +
           '</div>' +
+          '<div class="field"><label>分类</label><select name="category"><option value="rating">评级页（普通投稿需审核）</option><option value="talk">杂谈页（无需审核）</option>' + (isAdmin ? '<option value="about">关于页（仅管理员）</option>' : '') + '</select></div>' +
           '<div class="two-col">' +
             '<div class="field"><label>危害等级</label><select name="hazardLevel"><option value="1">1 轻微整活</option><option value="2">2 低度扰动</option><option value="3">3 中度混乱</option><option value="4">4 高度警报</option><option value="5">5 终极危害</option></select></div>' +
             '<div class="field"><label>标签</label><input name="tags" maxlength="160" placeholder="逗号分隔"></div>' +
@@ -2458,7 +2482,7 @@ export const appScript = String.raw`
           return '<button class="search-chip" data-action="search-suggestion" data-query="' + escAttr(item.query) + '">' + (index + 1) + '. ' + esc(item.query) + ' · ' + esc(String(item.count)) + '</button>';
         }).join("") + '</div>' : '') +
       '</div>' +
-      '<div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div>' +
+      '<div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button><button class="ghost-button" data-action="admin-export-markdown">' + icon("doc") + '<span>Markdown 备份</span></button></div>' +
     '</div>';
   }
 
@@ -2471,9 +2495,9 @@ export const appScript = String.raw`
       state.admin.posts.map(function (p) {
         return '<div class="table-row admin-post-row">' +
           '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + ' · 浏览 ' + esc(String(p.view_count || 0)) + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
-          '<span>等级 ' + esc(String(p.hazard_level)) + '</span>' +
+          '<span>' + categoryText(p.category) + ' · 等级 ' + esc(String(p.hazard_level)) + (p.pinned_at ? ' · 置顶' : '') + '</span>' +
           '<span class="status-pill">' + statusText(p.status) + '</span>' +
-          '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
+          '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="ghost-button" data-action="' + (p.pinned_at ? 'admin-unpin-post' : 'admin-pin-post') + '" data-id="' + escAttr(p.id) + '">' + icon("pin") + '<span>' + (p.pinned_at ? '取消置顶' : '置顶') + '</span></button><button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
         '</div>';
       }).join("") + '</div></section>';
   }
@@ -2501,11 +2525,16 @@ export const appScript = String.raw`
     return esc(map[status] || status || "");
   }
 
+  function categoryText(category) {
+    var map = { rating: "评级", about: "关于", talk: "杂谈" };
+    return esc(map[category] || "评级");
+  }
+
   function renderAdminComments() {
     return '<section class="page-section admin-section"><h2 class="section-title">回复</h2><div class="table">' +
       state.admin.comments.map(function (cm) {
         return '<div class="table-row">' +
-          '<span>' + esc(excerpt(cm.content, 80)) + '</span>' +
+          '<span>' + esc(excerpt(cm.content, 80)) + '<span class="admin-meta">' + esc(cm.post_title || "已删除帖子") + '</span></span>' +
           '<span>' + esc(cm.author_name || "匿名") + '</span>' +
           '<span class="status-pill">' + esc(cm.status) + '</span>' +
           '<button class="danger-button" data-action="admin-delete-comment" data-id="' + escAttr(cm.id) + '">' + icon("trash") + '<span>删除</span></button>' +
@@ -2564,6 +2593,8 @@ export const appScript = String.raw`
     if (!target) return;
     var action = target.getAttribute("data-action");
     if (action === "home") {
+      state.filters.category = "rating";
+      state.filters.level = "";
       location.hash = "#/";
     }
     if (action === "search-suggestion") {
@@ -2628,6 +2659,12 @@ export const appScript = String.raw`
       location.hash = "#/";
       await route();
     }
+    if (action === "filter-category") {
+      state.filters.category = target.getAttribute("data-category") || "rating";
+      state.filters.level = "";
+      location.hash = state.filters.category === "about" ? "#/about" : (state.filters.category === "talk" ? "#/talk" : "#/");
+      await route();
+    }
     if (action === "tag") {
       state.filters.tag = target.getAttribute("data-tag") || "";
       location.hash = "#/";
@@ -2638,7 +2675,7 @@ export const appScript = String.raw`
       await route();
     }
     if (action === "clear-filters") {
-      state.filters = { q: "", level: "", tag: "" };
+      state.filters = { q: "", level: "", tag: "", category: state.filters.category || "rating" };
       await route();
     }
     if (action === "like") await likePost(target.getAttribute("data-id"));
@@ -2650,6 +2687,9 @@ export const appScript = String.raw`
     if (action === "admin-approve-post") await adminSetPostStatus(target.getAttribute("data-id"), "published");
     if (action === "admin-reject-post") await adminSetPostStatus(target.getAttribute("data-id"), "rejected");
     if (action === "admin-hide-post") await adminSetPostStatus(target.getAttribute("data-id"), "hidden");
+    if (action === "admin-pin-post") await adminPinPost(target.getAttribute("data-id"), true);
+    if (action === "admin-unpin-post") await adminPinPost(target.getAttribute("data-id"), false);
+    if (action === "admin-export-markdown") window.location.href = "/api/admin/export/markdown";
     if (action === "admin-edit-post") await showAdminPostEditor(target.getAttribute("data-id"));
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
     if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
@@ -3351,6 +3391,7 @@ export const appScript = String.raw`
       var payload = {
         title: formData.get("title"),
         slug: formData.get("slug"),
+        category: formData.get("category"),
         summary: formData.get("summary"),
         ratingReason: formData.get("ratingReason"),
         twitterRef: formData.get("twitterRef"),
@@ -3477,6 +3518,18 @@ export const appScript = String.raw`
     }
   }
 
+  async function adminPinPost(postId, pinned) {
+    try {
+      await api("/api/admin/posts/" + postId + "/pin", { method: pinned ? "POST" : "DELETE" });
+      toast(pinned ? "已置顶" : "已取消置顶");
+      await loadAdmin();
+      renderAdmin();
+      syncEditorChrome();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   async function adminDelete(path) {
     try {
       await api(path, { method: "DELETE" });
@@ -3524,6 +3577,7 @@ export const appScript = String.raw`
                 '<div class="field"><label>危害等级</label><select name="hazardLevel">' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
                 '<div class="field"><label>状态</label><select name="status">' + ["pending","published","hidden","rejected","draft"].map(function (status) { return '<option value="' + status + '" ' + selected(post.status, status) + '>' + statusText(status) + '</option>'; }).join("") + '</select></div>' +
               '</div>' +
+              '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(post.category || "rating", "rating") + '>评级页</option><option value="talk" ' + selected(post.category || "rating", "talk") + '>杂谈页</option><option value="about" ' + selected(post.category || "rating", "about") + '>关于页</option></select></div>' +
               '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
               '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
               '<div class="two-col">' +
@@ -3583,6 +3637,7 @@ export const appScript = String.raw`
         body: {
           title: formData.get("title"),
           summary: formData.get("summary"),
+          category: formData.get("category"),
           ratingReason: formData.get("ratingReason"),
           twitterRef: formData.get("twitterRef"),
           content: formData.get("content"),
@@ -3885,6 +3940,7 @@ export const appScript = String.raw`
       plus: '<path d="M12 5v14"></path><path d="M5 12h14"></path>',
       user: '<path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="7" r="4"></circle>',
       shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path>',
+      pin: '<path d="M12 17v5"></path><path d="M5 17h14"></path><path d="m7 9 2-6h6l2 6"></path><path d="M8 9h8l1 8H7Z"></path>',
       eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle>',
       heart: '<path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 1 0-7.6 7.6L12 21l8.8-8.8a5.4 5.4 0 0 0 0-7.6Z"></path>',
       comment: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>',

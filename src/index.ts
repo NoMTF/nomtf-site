@@ -7,6 +7,7 @@ type Role = "user" | "admin";
 type UserStatus = "active" | "muted" | "banned";
 type PermissionLevel = "allow" | "muted" | "banned";
 type PostStatus = "draft" | "pending" | "published" | "hidden" | "rejected" | "deleted";
+type PostCategory = "rating" | "about" | "talk";
 
 type User = {
   id: string;
@@ -69,7 +70,7 @@ const SESSION_COOKIE = "nomtf_sid";
 const VISITOR_COOKIE = "nomtf_vid";
 const TERMS_VERSION = "2026-04-28";
 const MAX_POST_BYTES = 80_000;
-const MAX_COMMENT_BYTES = 4_000;
+const MAX_COMMENT_LENGTH = 200;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_MULTIPART_IMAGE_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const PASSWORD_ITERATIONS = 100_000;
@@ -77,6 +78,7 @@ const PASSWORD_MIN_LENGTH = 10;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const REGISTER_IP_COOLDOWN_SECONDS = 5 * 60;
 const CONTENT_WRITE_COOLDOWN_SECONDS = 30;
+const COMMENT_WRITE_COOLDOWN_SECONDS = 5;
 const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
 const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
@@ -395,6 +397,7 @@ app.get("/api/posts", async (c) => {
 
   const q = String(c.req.query("q") ?? "").trim();
   const tag = String(c.req.query("tag") ?? "").trim();
+  const category = cleanPostCategory(c.req.query("category"), "rating");
   const level = Number(c.req.query("level") ?? 0);
   const page = Math.max(1, Number(c.req.query("page") ?? 1));
   const limit = Math.min(30, Math.max(1, Number(c.req.query("limit") ?? 12)));
@@ -410,7 +413,8 @@ app.get("/api/posts", async (c) => {
   }
 
   const conditions = ["p.status = 'published'"];
-  const params: Array<string | number> = [];
+  const params: Array<string | number> = [category];
+  conditions.push("p.category = ?");
   if (q) {
     const like = `%${q}%`;
     conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ? OR p.rating_reason LIKE ? OR p.twitter_ref LIKE ?)");
@@ -430,7 +434,7 @@ app.get("/api/posts", async (c) => {
   const sql = `
     SELECT
       p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
-      p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
+      p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       u.username AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
@@ -439,7 +443,7 @@ app.get("/api/posts", async (c) => {
     FROM posts p
     JOIN users u ON u.id = p.author_id
     WHERE ${conditions.join(" AND ")}
-    ORDER BY p.created_at DESC
+    ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, p.created_at DESC
     LIMIT ? OFFSET ?
   `;
   const result = await c.env.DB.prepare(sql)
@@ -471,7 +475,7 @@ app.get("/api/posts/hot", async (c) => {
   const result = await c.env.DB.prepare(`
     SELECT
       p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
-      p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
+      p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       u.username AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
@@ -485,7 +489,7 @@ app.get("/api/posts/hot", async (c) => {
     FROM posts p
     JOIN users u ON u.id = p.author_id
     WHERE p.status = 'published'
-    ORDER BY hot_score DESC, p.created_at DESC
+    ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, hot_score DESC, p.created_at DESC
     LIMIT ?
   `).bind(subjectType, subjectId, limit).all<Record<string, unknown>>();
 
@@ -558,14 +562,16 @@ app.post("/api/posts", async (c) => {
   const content = cleanText(body.content, MAX_POST_BYTES);
   const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
   const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
+  const category = cleanPostCategory(body.category, "rating");
   const hazardLevel = Number(body.hazardLevel ?? body.hazard_level);
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
-  const status: PostStatus = user.role === "admin"
-    ? (body.status === "draft" ? "draft" : "published")
-    : "pending";
+  if (category === "about" && user.role !== "admin") {
+    return c.json({ error: "关于页只能由管理员发布" }, 403);
+  }
+  const status = postStatusForCreate(user, category, body.status);
 
   if (!title || title.length < 2) {
     return c.json({ error: "标题太短了" }, 400);
@@ -589,14 +595,66 @@ app.post("/api/posts", async (c) => {
   const id = crypto.randomUUID();
   const slug = await uniqueSlug(c.env.DB, requestedSlug || title);
   await c.env.DB.prepare(`
-    INSERT INTO posts (id, title, slug, summary, content, rating_reason, twitter_ref, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO posts (id, title, slug, summary, content, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
-    .bind(id, title, slug, summary, content, ratingReason, twitterRef, hazardLevel, nsfw ? 1 : 0, coverKey, status, user.id, now, now)
+    .bind(id, title, slug, summary, content, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, user.id, now, now)
     .run();
 
   await syncTags(c.env.DB, id, tags);
   return c.json({ ok: true, id, slug, status }, 201);
+});
+
+app.post("/api/submissions", async (c) => {
+  const apiKey = getSubmissionApiKey(c.env);
+  if (!apiKey) return c.json({ error: "投稿 API 尚未开启，请先配置 SUBMISSION_API_KEY" }, 503);
+  const provided = c.req.header("X-NoMTF-Submit-Key") ?? c.req.header("Authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (!safeEqualText(provided, apiKey)) return c.json({ error: "投稿 API key 不正确" }, 401);
+  const denied = requireWriteAccess(c);
+  if (denied) return denied;
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "submission_api_ip",
+      subject: ipSubject(c),
+      limit: 20,
+      windowSeconds: 60,
+      message: "投稿 API 调用太频繁了，请稍后再试"
+    }
+  ]);
+  if (limited) return limited;
+
+  const body = await readJson(c);
+  const title = cleanText(body.title, 120);
+  const summary = cleanText(body.summary, 240);
+  const content = cleanText(body.content, MAX_POST_BYTES);
+  const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
+  const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
+  const category = cleanPostCategory(body.category, "rating");
+  const hazardLevel = Number(body.hazardLevel ?? body.hazard_level ?? 1);
+  const nsfw = Boolean(body.nsfw);
+  const requestedSlug = cleanText(body.slug, 90);
+  const tags = cleanTags(body.tags);
+  if (category === "about") return c.json({ error: "关于页只能由管理员在后台发布" }, 403);
+  if (!title || title.length < 2) return c.json({ error: "标题太短了" }, 400);
+  if (!content || content.length < 10) return c.json({ error: "正文至少 10 个字符" }, 400);
+  if (!ratingReason) return c.json({ error: "评级原因必填" }, 400);
+  if (!twitterRef) return c.json({ error: "推特链接/用户名必填；没有就填占位符或 @用户名" }, 400);
+  if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) return c.json({ error: "评级需要是 1-5 级" }, 400);
+
+  const authorId = await getSubmissionAuthorId(c.env.DB);
+  if (!authorId) return c.json({ error: "没有可用的管理员作者账号" }, 500);
+  const now = nowIso();
+  const id = crypto.randomUUID();
+  const slug = await uniqueSlug(c.env.DB, requestedSlug || title);
+  const status: PostStatus = category === "talk" ? "published" : "pending";
+  await c.env.DB.prepare(`
+    INSERT INTO posts (id, title, slug, summary, content, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+  `)
+    .bind(id, title, slug, summary, content, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, status, authorId, now, now)
+    .run();
+  await syncTags(c.env.DB, id, tags);
+  return c.json({ ok: true, id, slug, status, category }, 201);
 });
 
 app.patch("/api/posts/:id", async (c) => {
@@ -614,13 +672,17 @@ app.patch("/api/posts/:id", async (c) => {
   const content = cleanText(body.content, MAX_POST_BYTES);
   const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
   const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
+  const category = cleanPostCategory(body.category, "rating");
   const hazardLevel = Number(body.hazardLevel ?? body.hazard_level);
   const nsfw = Boolean(body.nsfw);
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
+  if (category === "about" && user.role !== "admin") {
+    return c.json({ error: "关于页只能由管理员发布" }, 403);
+  }
   const status: PostStatus = user.role === "admin"
     ? cleanPostStatus(body.status, "published")
-    : "pending";
+    : (category === "talk" ? "published" : "pending");
   if (!title || !content || !Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
     return c.json({ error: "帖子字段不完整" }, 400);
   }
@@ -631,9 +693,9 @@ app.patch("/api/posts/:id", async (c) => {
 
   await c.env.DB.prepare(`
     UPDATE posts
-    SET title = ?, summary = ?, content = ?, rating_reason = ?, twitter_ref = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
+    SET title = ?, summary = ?, content = ?, rating_reason = ?, twitter_ref = ?, category = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
     WHERE id = ?
-  `).bind(title, summary, content, ratingReason, twitterRef, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
+  `).bind(title, summary, content, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
   await syncTags(c.env.DB, post.id, tags);
   return c.json({ ok: true, status });
 });
@@ -680,26 +742,27 @@ app.post("/api/posts/:id/like", async (c) => {
 });
 
 app.post("/api/posts/:id/comments", async (c) => {
-  const user = requireActiveUser(c);
-  if (user instanceof Response) return user;
+  const user = c.get("user");
   const denied = requireWriteAccess(c);
   if (denied) return denied;
   const postId = c.req.param("id");
   const body = await readJson(c);
-  const content = cleanText(body.content, MAX_COMMENT_BYTES);
+  const rawContent = String(body.content ?? "").trim();
+  if (rawContent.length > MAX_COMMENT_LENGTH) return c.json({ error: "评论最多 200 字" }, 400);
+  const content = cleanText(rawContent, MAX_COMMENT_LENGTH);
   const parentId = typeof body.parentId === "string" && body.parentId ? body.parentId : null;
 
   if (content.length < 2) return c.json({ error: "回复太短了" }, 400);
   const post = await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'").bind(postId).first();
   if (!post) return c.json({ error: "帖子不存在" }, 404);
-  const cooldown = await enforceContentWriteCooldown(c, user);
+  const cooldown = await enforceCommentWriteCooldown(c);
   if (cooldown) return cooldown;
 
   const now = nowIso();
   await c.env.DB.prepare(`
     INSERT INTO comments (id, post_id, author_id, visitor_id, parent_id, content, status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, 'published', ?, ?)
-  `).bind(crypto.randomUUID(), postId, user.id, c.get("visitorId"), parentId, content, now, now).run();
+  `).bind(crypto.randomUUID(), postId, user?.id ?? null, c.get("visitorId"), parentId, content, now, now).run();
   return c.json({ ok: true }, 201);
 });
 
@@ -773,7 +836,7 @@ app.get("/api/admin/posts", async (c) => {
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
     SELECT
-      p.id, p.title, p.slug, p.summary, p.hazard_level, p.nsfw, p.status, COALESCE(p.view_count, 0) AS view_count,
+      p.id, p.title, p.slug, p.summary, p.category, p.pinned_at, p.hazard_level, p.nsfw, p.status, COALESCE(p.view_count, 0) AS view_count,
       p.created_at, p.updated_at, p.reviewed_at,
       u.username AS author_name,
       reviewer.username AS reviewed_by_name
@@ -789,6 +852,8 @@ app.get("/api/admin/posts", async (c) => {
         WHEN 'rejected' THEN 3
         ELSE 4
       END,
+      CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END,
+      p.pinned_at DESC,
       p.created_at DESC
     LIMIT 100
   `).all<Record<string, unknown>>();
@@ -829,6 +894,32 @@ app.get("/api/admin/stats", async (c) => {
       adminUsers: Number(users?.admin_users ?? 0),
       searches24h: Number(searches?.search_count ?? 0),
       hotSearches: await getSearchTrends(c.env.DB, 8)
+    }
+  });
+});
+
+app.get("/api/admin/export/markdown", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const result = await c.env.DB.prepare(`
+    SELECT
+      p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
+      p.category, p.hazard_level, p.nsfw, p.cover_key, p.status, p.view_count, p.pinned_at, p.created_at, p.updated_at,
+      u.username AS author_name,
+      COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags
+    FROM posts p
+    JOIN users u ON u.id = p.author_id
+    WHERE p.status != 'deleted'
+    ORDER BY p.category ASC, CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, p.created_at DESC
+    LIMIT 2000
+  `).all<Record<string, unknown>>();
+  const markdown = renderMarkdownBackup(result.results ?? []);
+  const filename = `nomtf-posts-${new Date().toISOString().slice(0, 10)}.md`;
+  return new Response(markdown, {
+    headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store"
     }
   });
 });
@@ -875,6 +966,29 @@ app.patch("/api/admin/posts/:id/status", async (c) => {
   return c.json({ ok: true, status });
 });
 
+app.post("/api/admin/posts/:id/pin", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const existing = await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status != 'deleted'")
+    .bind(c.req.param("id"))
+    .first<{ id: string }>();
+  if (!existing) return c.json({ error: "帖子不存在" }, 404);
+  const now = nowIso();
+  await c.env.DB.prepare("UPDATE posts SET pinned_at = ?, pinned_by = ?, updated_at = ? WHERE id = ?")
+    .bind(now, user.id, now, existing.id)
+    .run();
+  return c.json({ ok: true, pinnedAt: now });
+});
+
+app.delete("/api/admin/posts/:id/pin", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  await c.env.DB.prepare("UPDATE posts SET pinned_at = NULL, pinned_by = NULL, updated_at = ? WHERE id = ? AND status != 'deleted'")
+    .bind(nowIso(), c.req.param("id"))
+    .run();
+  return c.json({ ok: true });
+});
+
 app.delete("/api/admin/posts/:id", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
@@ -888,9 +1002,9 @@ app.get("/api/admin/comments", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
-    SELECT cm.id, cm.content, cm.status, cm.created_at, cm.visitor_id, p.title AS post_title, u.username AS author_name
+    SELECT cm.id, cm.content, cm.status, cm.created_at, cm.visitor_id, COALESCE(p.title, '已删除帖子') AS post_title, u.username AS author_name
     FROM comments cm
-    JOIN posts p ON p.id = cm.post_id
+    LEFT JOIN posts p ON p.id = cm.post_id
     LEFT JOIN users u ON u.id = cm.author_id
     ORDER BY cm.created_at DESC
     LIMIT 100
@@ -1110,6 +1224,8 @@ async function applySecurityHeaders(c: AppContext, next: Next) {
   c.res.headers.set("X-Content-Type-Options", "nosniff");
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   c.res.headers.set("X-Frame-Options", "SAMEORIGIN");
+  c.res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  c.res.headers.set("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()");
   if (isHttps(c)) {
     c.res.headers.set("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
   }
@@ -1126,7 +1242,7 @@ async function bindRequestContext(c: AppContext, next: Next) {
   });
 
   const secret = getSessionSecret(c.env);
-  const ip = c.req.header("CF-Connecting-IP") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+  const ip = clientIpFromRequest(c);
   const ipHash = ip ? await sha256Hex(`${secret}:${ip}`) : "";
   const token = getCookie(c, SESSION_COOKIE);
   const user = token ? await getUserBySession(c.env.DB, token) : null;
@@ -1154,6 +1270,18 @@ async function bindRequestContext(c: AppContext, next: Next) {
   }
 
   await next();
+}
+
+function clientIpFromRequest(c: AppContext): string {
+  const trueClientIp = c.req.header("True-Client-IP")?.trim();
+  if (trueClientIp) return trueClientIp;
+  const cfConnectingIp = c.req.header("CF-Connecting-IP")?.trim();
+  if (cfConnectingIp) return cfConnectingIp;
+  const url = new URL(c.req.url);
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname.endsWith(".localhost")) {
+    return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+  }
+  return "";
 }
 
 async function getUserBySession(db: D1Database, token: string): Promise<User | null> {
@@ -1290,6 +1418,19 @@ async function enforceContentWriteCooldown(c: AppContext, user: User): Promise<R
 
   await setCooldown(c.env.DB, "content_write_user", userSubject(user), CONTENT_WRITE_COOLDOWN_SECONDS);
   await setCooldown(c.env.DB, "content_write_ip", ipSubject(c), CONTENT_WRITE_COOLDOWN_SECONDS);
+  return null;
+}
+
+async function enforceCommentWriteCooldown(c: AppContext): Promise<Response | null> {
+  if (isAdminRequest(c)) return null;
+  const message = `评论太快了，请 ${COMMENT_WRITE_COOLDOWN_SECONDS} 秒后再试`;
+  const actorCooldown = await requireCooldownAvailable(c, "comment_write_actor", actorSubject(c), message);
+  if (actorCooldown) return actorCooldown;
+  const ipCooldown = await requireCooldownAvailable(c, "comment_write_ip", ipSubject(c), message);
+  if (ipCooldown) return ipCooldown;
+
+  await setCooldown(c.env.DB, "comment_write_actor", actorSubject(c), COMMENT_WRITE_COOLDOWN_SECONDS);
+  await setCooldown(c.env.DB, "comment_write_ip", ipSubject(c), COMMENT_WRITE_COOLDOWN_SECONDS);
   return null;
 }
 
@@ -1450,6 +1591,12 @@ async function getSearchTrends(db: D1Database, limit: number): Promise<Array<{ q
   }));
 }
 
+async function getSubmissionAuthorId(db: D1Database): Promise<string | null> {
+  const row = await db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY created_at ASC LIMIT 1")
+    .first<{ id: string }>();
+  return row?.id ?? null;
+}
+
 function maybeScheduleRateLimitCleanup(c: AppContext, subject: string, windowStart: number) {
   const lastChar = subject.charCodeAt(subject.length - 1) || 0;
   if (windowStart % 600 !== 0 || lastChar % 16 !== 0) return;
@@ -1607,6 +1754,63 @@ async function uniqueSlug(db: D1Database, source: string): Promise<string> {
   return `${base}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
+  const lines = [
+    "# NoMTF 文章干备份",
+    "",
+    `导出时间：${nowIso()}`,
+    "",
+    "> 不包含图片二进制；封面和正文图片均以文件名占位。",
+    ""
+  ];
+  for (const row of rows) {
+    const tags = String(row.tags ?? "").split("|").filter(Boolean);
+    lines.push("---", "");
+    lines.push(`# ${markdownLine(row.title)}`);
+    lines.push("");
+    lines.push(`- ID: ${markdownLine(row.id)}`);
+    lines.push(`- Slug: ${markdownLine(row.slug)}`);
+    lines.push(`- 分类: ${markdownLine(row.category ?? "rating")}`);
+    lines.push(`- 状态: ${markdownLine(row.status)}`);
+    lines.push(`- 作者: ${markdownLine(row.author_name ?? "匿名")}`);
+    lines.push(`- 危害等级: ${markdownLine(row.hazard_level)}`);
+    lines.push(`- NSFW: ${Number(row.nsfw ?? 0) ? "yes" : "no"}`);
+    lines.push(`- 浏览量: ${markdownLine(row.view_count ?? 0)}`);
+    if (row.pinned_at) lines.push(`- 置顶时间: ${markdownLine(row.pinned_at)}`);
+    lines.push(`- 创建时间: ${markdownLine(row.created_at)}`);
+    lines.push(`- 更新时间: ${markdownLine(row.updated_at)}`);
+    if (tags.length) lines.push(`- 标签: ${tags.map((tag) => `#${markdownLine(tag)}`).join(" ")}`);
+    if (row.cover_key) lines.push(`- 封面: [图片: ${markdownLine(fileNameFromKey(String(row.cover_key)))}]`);
+    lines.push("");
+    if (row.summary) {
+      lines.push(`> ${markdownLine(row.summary)}`, "");
+    }
+    if (row.rating_reason) {
+      lines.push(`**评级原因：${markdownLine(row.rating_reason)}**`, "");
+    }
+    lines.push(stripImagesToFileNames(String(row.content ?? "")), "");
+    if (row.twitter_ref) {
+      lines.push(`<span style="color:#777">推特：${markdownLine(row.twitter_ref)}</span>`, "");
+    }
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function stripImagesToFileNames(content: string): string {
+  return content.replace(/!\[([^\]]*)\]\(\/media\/([^)]+)\)/g, (_match, alt: string, key: string) => {
+    const label = alt ? `${alt} / ${fileNameFromKey(key)}` : fileNameFromKey(key);
+    return `[图片: ${label}]`;
+  });
+}
+
+function fileNameFromKey(key: string): string {
+  return key.split("/").filter(Boolean).pop() || key;
+}
+
+function markdownLine(value: unknown): string {
+  return String(value ?? "").replace(/\r?\n/g, " ").trim();
+}
+
 function normalizePostRow(row: Record<string, unknown>) {
   const coverKey = typeof row.cover_key === "string" && row.cover_key ? row.cover_key : "";
   return {
@@ -1617,6 +1821,8 @@ function normalizePostRow(row: Record<string, unknown>) {
     content: String(row.content ?? ""),
     ratingReason: String(row.rating_reason ?? ""),
     twitterRef: String(row.twitter_ref ?? ""),
+    category: String(row.category ?? "rating"),
+    pinnedAt: String(row.pinned_at ?? ""),
     hazardLevel: Number(row.hazard_level),
     nsfw: Boolean(Number(row.nsfw ?? 0)),
     coverKey,
@@ -1771,6 +1977,10 @@ function getSessionSecret(env: Env): string {
   return env.SESSION_SECRET;
 }
 
+function getSubmissionApiKey(env: Env): string {
+  return String((env as Env & { SUBMISSION_API_KEY?: string }).SUBMISSION_API_KEY ?? "");
+}
+
 function isHttps(c: AppContext): boolean {
   return new URL(c.req.url).protocol === "https:";
 }
@@ -1811,6 +2021,19 @@ function normalizeSearchQuery(value: unknown): string {
 
 function searchQueryKey(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function cleanPostCategory(value: unknown, fallback: PostCategory): PostCategory {
+  const category = String(value ?? "").trim();
+  return ["rating", "about", "talk"].includes(category)
+    ? category as PostCategory
+    : fallback;
+}
+
+function postStatusForCreate(user: User, category: PostCategory, rawStatus: unknown): PostStatus {
+  if (user.role === "admin") return cleanPostStatus(rawStatus, "published") === "draft" ? "draft" : "published";
+  if (category === "talk") return "published";
+  return "pending";
 }
 
 function cleanPostStatus(value: unknown, fallback: PostStatus): PostStatus {
