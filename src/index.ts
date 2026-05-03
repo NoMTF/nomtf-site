@@ -435,12 +435,19 @@ app.post("/api/media", async (c) => {
   const denied = requireWriteAccess(c);
   if (denied) return denied;
 
-  const form = await c.req.raw.formData();
+  let form: FormData;
+  try {
+    form = await c.req.raw.formData();
+  } catch {
+    return c.json({ error: "图片表单解析失败" }, 400);
+  }
+
   const file = form.get("file");
-  if (!(file instanceof File)) {
+  if (!isUploadedFile(file)) {
     return c.json({ error: "没有收到图片" }, 400);
   }
-  if (!file.type.startsWith("image/")) {
+  const contentType = file.type || "application/octet-stream";
+  if (!contentType.startsWith("image/")) {
     return c.json({ error: "只能上传图片" }, 415);
   }
   if (file.size > MAX_IMAGE_BYTES) {
@@ -449,9 +456,10 @@ app.post("/api/media", async (c) => {
 
   const ext = extensionFromName(file.name);
   const key = `uploads/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`;
-  await c.env.MEDIA.put(key, file.stream(), {
+  const bytes = await file.arrayBuffer();
+  await c.env.MEDIA.put(key, bytes, {
     httpMetadata: {
-      contentType: file.type,
+      contentType,
       cacheControl: "public, max-age=31536000, immutable"
     },
     customMetadata: {
@@ -1068,6 +1076,15 @@ function optionalR2Key(value: unknown): string | null {
   if (!key) return null;
   if (key.includes("..") || key.startsWith("/") || key.length > 300) return null;
   return key;
+}
+
+function isUploadedFile(value: unknown): value is File {
+  if (typeof value !== "object" || value === null) return false;
+  const maybeFile = value as File;
+  return typeof maybeFile.name === "string"
+    && typeof maybeFile.type === "string"
+    && typeof maybeFile.size === "number"
+    && typeof maybeFile.arrayBuffer === "function";
 }
 
 function extensionFromName(name: string): string {

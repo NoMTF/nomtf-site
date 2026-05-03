@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-mobile-fit";
+const ASSET_VERSION = "20260503-media-assets";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -90,6 +90,18 @@ button {
 }
 
 a { color: inherit; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .shell {
   min-height: 100vh;
@@ -259,6 +271,22 @@ a { color: inherit; }
   border-radius: 8px;
   padding: clamp(22px, 4vw, 42px);
   box-shadow: var(--shadow);
+}
+
+.hero-banner {
+  width: 100%;
+  aspect-ratio: 650 / 251;
+  overflow: hidden;
+  border: 1px solid rgba(216, 230, 247, .9);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffd4e9, #bceaff);
+}
+
+.hero-banner img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .hero h1 {
@@ -458,6 +486,12 @@ a { color: inherit; }
   display: block;
 }
 
+.post-cover img.default-level-cover {
+  object-fit: contain;
+  object-position: center top;
+  background: linear-gradient(135deg, #fff0f8, #e8f7ff);
+}
+
 .cover-fallback {
   height: 100%;
   min-height: 176px;
@@ -560,6 +594,11 @@ a { color: inherit; }
   max-height: 440px;
   object-fit: cover;
   display: block;
+}
+
+.detail-cover img.default-level-cover {
+  object-fit: contain;
+  background: linear-gradient(135deg, #fff0f8, #e8f7ff);
 }
 
 .detail-article {
@@ -1002,6 +1041,10 @@ svg {
     padding: 16px;
   }
 
+  .hero-banner {
+    margin-bottom: 2px;
+  }
+
   .hero h1 {
     font-size: 31px;
     line-height: 1.05;
@@ -1348,6 +1391,16 @@ export const appScript = String.raw`
     4: ["4", "高度警报", "建议谨慎围观"],
     5: ["5", "终极危害", "只适合娱乐性封存"]
   };
+  var siteAssets = {
+    banner: "/media/site/banner.jpg?v=20260503-media",
+    levelCovers: {
+      1: "/media/site/level-1.png?v=20260503-media",
+      2: "/media/site/level-2.png?v=20260503-media",
+      3: "/media/site/level-3.png?v=20260503-media",
+      4: "/media/site/level-4.png?v=20260503-media",
+      5: "/media/site/level-5.png?v=20260503-media"
+    }
+  };
 
   document.addEventListener("DOMContentLoaded", init);
   window.addEventListener("hashchange", route);
@@ -1499,7 +1552,8 @@ export const appScript = String.raw`
     app.innerHTML =
       '<section class="hero">' +
         '<div class="hero-copy">' +
-          '<h1>NoMTF<br><span>不药娘网</span></h1>' +
+          '<h1 class="sr-only">NoMTF 不药娘网</h1>' +
+          '<div class="hero-banner"><img src="' + siteAssets.banner + '" alt="NoMTF 不药娘网"></div>' +
           '<p class="hero-lede">把物品、现象和网络梗放进娱乐评级表，按“对社会的危害等级”做 1-5 级荒诞归档。本站禁止针对现实个人或受保护群体的仇恨、骚扰与煽动。</p>' +
           '<div class="hero-actions">' +
             '<button class="primary-button" data-action="new-post">' + icon("plus") + '<span>发布评级</span></button>' +
@@ -1637,8 +1691,9 @@ export const appScript = String.raw`
   }
 
   function postCard(post) {
-    var cover = post.coverUrl
-      ? '<img src="' + escAttr(post.coverUrl) + '" alt="">'
+    var coverUrl = post.coverUrl || defaultLevelCover(post.hazardLevel);
+    var cover = coverUrl
+      ? '<img class="' + (!post.coverUrl ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt="">'
       : '<div class="cover-fallback"><span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span></div>';
     return '<article class="post-card">' +
       '<div class="post-cover">' + cover + '</div>' +
@@ -1670,9 +1725,10 @@ export const appScript = String.raw`
       app.innerHTML = '<div class="empty-state">帖子不存在。</div>';
       return;
     }
+    var coverUrl = post.coverUrl || defaultLevelCover(post.hazardLevel);
     app.innerHTML =
       '<section class="detail">' +
-        (post.coverUrl ? '<div class="detail-cover"><img src="' + escAttr(post.coverUrl) + '" alt=""></div>' : '') +
+        (coverUrl ? '<div class="detail-cover"><img class="' + (!post.coverUrl ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt=""></div>' : '') +
         '<article class="page-section detail-article">' +
           '<div class="detail-meta">' +
             '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
@@ -2625,6 +2681,10 @@ export const appScript = String.raw`
     var body = new FormData();
     body.set("file", file);
     return api("/api/media", { method: "POST", body: body });
+  }
+
+  function defaultLevelCover(level) {
+    return siteAssets.levelCovers[Number(level)] || "";
   }
 
   function showAuth(mode) {
