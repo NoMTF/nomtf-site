@@ -72,7 +72,7 @@ const MAX_COMMENT_BYTES = 4_000;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_MULTIPART_IMAGE_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const PASSWORD_ITERATIONS = 100_000;
-const REGISTER_IP_COOLDOWN_SECONDS = 30 * 60;
+const REGISTER_IP_COOLDOWN_SECONDS = 5 * 60;
 const CONTENT_WRITE_COOLDOWN_SECONDS = 30;
 const DEFAULT_UI_CONFIG: UiConfig = {
   searchPlaceholder: "搜索物品、现象、标签",
@@ -165,7 +165,7 @@ app.post("/api/register", async (c) => {
     subject: ipSubject(c),
     limit: 8,
     windowSeconds: REGISTER_IP_COOLDOWN_SECONDS,
-    message: "这个网络注册太频繁了，请半小时后再试"
+    message: "这个网络注册太频繁了，请 5 分钟后再试"
   });
   if (attemptLimited) return attemptLimited;
 
@@ -188,7 +188,7 @@ app.post("/api/register", async (c) => {
     c,
     "register_success_ip",
     ipSubject(c),
-    "同一 IP 半小时内只能注册 1 个账号"
+    "同一 IP 5 分钟内只能注册 1 个账号"
   );
   if (registeredRecently) return registeredRecently;
 
