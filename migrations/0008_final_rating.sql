@@ -1,0 +1,1 @@
+ALTER TABLE posts ADD COLUMN final_rating TEXT NOT NULL DEFAULT '';

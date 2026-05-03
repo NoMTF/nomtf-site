@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260504-mobile-usability";
+const ASSET_VERSION = "20260504-final-rating";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -876,6 +876,12 @@ a { color: inherit; }
 .rating-reason {
   color: var(--ink);
   font-size: 18px;
+}
+
+.final-rating {
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 900;
 }
 
 .twitter-ref {
@@ -2649,6 +2655,7 @@ export const appScript = String.raw`
             '<div class="field"><label>标签</label><input name="tags" maxlength="160" placeholder="逗号分隔"></div>' +
           '</div>' +
           '<div class="field"><label>摘要</label><input name="summary" maxlength="240"></div>' +
+          '<div class="field' + ratingHiddenClass + '" data-rating-only><label>最终评级（必填）</label><input name="finalRating" maxlength="3" pattern="[1-5][+-]?" data-rating-required' + ratingRequiredAttrs + ' placeholder="例如 1- / 1 / 1+"></div>' +
           '<div class="two-col' + ratingHiddenClass + '" data-rating-only>' +
             '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" data-rating-required' + ratingRequiredAttrs + ' placeholder="为什么给这个等级"></div>' +
             '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" data-rating-required' + ratingRequiredAttrs + ' placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
@@ -3767,6 +3774,7 @@ export const appScript = String.raw`
         content: content
       };
       if (isRatingCategory(category)) {
+        payload.finalRating = formData.get("finalRating");
         payload.ratingReason = formData.get("ratingReason");
         payload.twitterRef = formData.get("twitterRef");
         payload.hazardLevel = Number(formData.get("hazardLevel"));
@@ -3954,6 +3962,7 @@ export const appScript = String.raw`
               '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(post.category || "rating", "rating") + '>评级页</option><option value="talk" ' + selected(post.category || "rating", "talk") + '>杂谈页</option><option value="about" ' + selected(post.category || "rating", "about") + '>关于页</option></select></div>' +
               '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
               '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
+              '<div class="field' + ratingHiddenClass + '" data-rating-only><label>最终评级（必填）</label><input name="finalRating" maxlength="3" pattern="[1-5][+-]?" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.finalRating || "") + '" placeholder="例如 1- / 1 / 1+"></div>' +
               '<div class="two-col' + ratingHiddenClass + '" data-rating-only>' +
                 '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.ratingReason || "") + '"></div>' +
                 '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
@@ -4019,6 +4028,7 @@ export const appScript = String.raw`
         nsfw: formData.get("nsfw") === "on"
       };
       if (isRatingCategory(category)) {
+        payload.finalRating = formData.get("finalRating");
         payload.ratingReason = formData.get("ratingReason");
         payload.twitterRef = formData.get("twitterRef");
         payload.hazardLevel = formData.get("hazardLevel");
@@ -4205,9 +4215,15 @@ export const appScript = String.raw`
 
   function renderPostContent(post) {
     if (!post) return "";
-    return (isRatingCategory(post.category) ? renderRatingReason(post.ratingReason) : "") +
+    return (isRatingCategory(post.category) ? renderFinalRating(post.finalRating) + renderRatingReason(post.ratingReason) : "") +
       renderMarkdown(post.content) +
       (isRatingCategory(post.category) ? renderTwitterRef(post.twitterRef) : "");
+  }
+
+  function renderFinalRating(value) {
+    value = String(value || "").trim();
+    if (!value) return "";
+    return '<p class="final-rating"><strong>最终等级：' + esc(value) + '</strong></p>';
   }
 
   function renderRatingReason(reason) {

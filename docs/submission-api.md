@@ -33,6 +33,7 @@ Authorization: Bearer <SUBMISSION_API_KEY>
   "title": "标题，必填，2-120 字",
   "summary": "摘要，可选，最多 240 字",
   "content": "正文，必填，至少 10 字",
+  "finalRating": "仅 rating 分类必填：最终等级，格式为 1-、1、1+ 到 5-、5、5+",
   "ratingReason": "仅 rating 分类必填，最多 240 字",
   "twitterRef": "仅 rating 分类必填：推特链接、@用户名或占位符，最多 160 字",
   "hazardLevel": "仅 rating 分类必填：1-5",
@@ -45,7 +46,7 @@ Authorization: Bearer <SUBMISSION_API_KEY>
 
 `category` 可选：
 
-- `rating`：进入审核队列，需要 `ratingReason`、`twitterRef`、`hazardLevel`。
+- `rating`：进入审核队列，需要 `finalRating`、`ratingReason`、`twitterRef`、`hazardLevel`。
 - `talk`：杂谈页，直接公开，不需要评级、评级原因或推特链接。
 - `about`：不允许 API 发布，只能管理员在后台发布。
 

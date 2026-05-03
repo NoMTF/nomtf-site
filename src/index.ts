@@ -88,6 +88,7 @@ const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
 const LOGIN_IP_LOCK_THRESHOLD = 20;
 const MAX_SEARCH_QUERY_LENGTH = 80;
+const MAX_FINAL_RATING_LENGTH = 3;
 const MAX_RATING_REASON_LENGTH = 240;
 const MAX_TWITTER_REF_LENGTH = 160;
 const WEAK_PASSWORD_PARTS = [
@@ -421,8 +422,8 @@ app.get("/api/posts", async (c) => {
   conditions.push("p.category = ?");
   if (q) {
     const like = `%${q}%`;
-    conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ? OR p.rating_reason LIKE ? OR p.twitter_ref LIKE ?)");
-    params.push(like, like, like, like, like);
+    conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ? OR p.final_rating LIKE ? OR p.rating_reason LIKE ? OR p.twitter_ref LIKE ?)");
+    params.push(like, like, like, like, like, like);
   }
   if (category === "rating" && level >= 1 && level <= 5) {
     conditions.push("p.hazard_level = ?");
@@ -437,7 +438,7 @@ app.get("/api/posts", async (c) => {
 
   const sql = `
     SELECT
-      p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
+      p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       u.username AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
@@ -478,7 +479,7 @@ app.get("/api/posts/hot", async (c) => {
   const limit = Math.min(10, Math.max(3, Number(c.req.query("limit") ?? 6)));
   const result = await c.env.DB.prepare(`
     SELECT
-      p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
+      p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       u.username AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
@@ -566,6 +567,7 @@ app.post("/api/posts", async (c) => {
   const content = cleanText(body.content, MAX_POST_BYTES);
   const category = cleanPostCategory(body.category, "rating");
   const isRating = category === "rating";
+  const finalRating = isRating ? cleanFinalRating(body.finalRating ?? body.final_rating) : "";
   const ratingReason = isRating ? cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH) : "";
   const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
   const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
@@ -585,6 +587,9 @@ app.post("/api/posts", async (c) => {
     return c.json({ error: "正文至少 10 个字符" }, 400);
   }
   if (isRating) {
+    if (!isValidFinalRating(finalRating)) {
+      return c.json({ error: "最终等级必填，格式只能是 1-、1、1+ 到 5-、5、5+" }, 400);
+    }
     if (!ratingReason) {
       return c.json({ error: "评级原因必填" }, 400);
     }
@@ -602,10 +607,10 @@ app.post("/api/posts", async (c) => {
   const id = crypto.randomUUID();
   const slug = await uniqueSlug(c.env.DB, requestedSlug || title);
   await c.env.DB.prepare(`
-    INSERT INTO posts (id, title, slug, summary, content, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO posts (id, title, slug, summary, content, final_rating, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
-    .bind(id, title, slug, summary, content, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, user.id, now, now)
+    .bind(id, title, slug, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, user.id, now, now)
     .run();
 
   await syncTags(c.env.DB, id, tags);
@@ -636,6 +641,7 @@ app.post("/api/submissions", async (c) => {
   const content = cleanText(body.content, MAX_POST_BYTES);
   const category = cleanPostCategory(body.category, "rating");
   const isRating = category === "rating";
+  const finalRating = isRating ? cleanFinalRating(body.finalRating ?? body.final_rating) : "";
   const ratingReason = isRating ? cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH) : "";
   const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
   const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
@@ -651,6 +657,10 @@ app.post("/api/submissions", async (c) => {
     if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) return c.json({ error: "评级需要是 1-5 级" }, 400);
   }
 
+  if (isRating && !isValidFinalRating(finalRating)) {
+    return c.json({ error: "最终等级必填，格式只能是 1-、1、1+ 到 5-、5、5+" }, 400);
+  }
+
   const authorId = await getSubmissionAuthorId(c.env.DB);
   if (!authorId) return c.json({ error: "没有可用的管理员作者账号" }, 500);
   const now = nowIso();
@@ -658,10 +668,10 @@ app.post("/api/submissions", async (c) => {
   const slug = await uniqueSlug(c.env.DB, requestedSlug || title);
   const status: PostStatus = category === "talk" ? "published" : "pending";
   await c.env.DB.prepare(`
-    INSERT INTO posts (id, title, slug, summary, content, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+    INSERT INTO posts (id, title, slug, summary, content, final_rating, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
   `)
-    .bind(id, title, slug, summary, content, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, status, authorId, now, now)
+    .bind(id, title, slug, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, status, authorId, now, now)
     .run();
   await syncTags(c.env.DB, id, tags);
   return c.json({ ok: true, id, slug, status, category }, 201);
@@ -682,6 +692,7 @@ app.patch("/api/posts/:id", async (c) => {
   const content = cleanText(body.content, MAX_POST_BYTES);
   const category = cleanPostCategory(body.category, "rating");
   const isRating = category === "rating";
+  const finalRating = isRating ? cleanFinalRating(body.finalRating ?? body.final_rating) : "";
   const ratingReason = isRating ? cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH) : "";
   const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
   const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
@@ -707,11 +718,15 @@ app.patch("/api/posts/:id", async (c) => {
     }
   }
 
+  if (isRating && !isValidFinalRating(finalRating)) {
+    return c.json({ error: "最终等级必填，格式只能是 1-、1、1+ 到 5-、5、5+" }, 400);
+  }
+
   await c.env.DB.prepare(`
     UPDATE posts
-    SET title = ?, summary = ?, content = ?, rating_reason = ?, twitter_ref = ?, category = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
+    SET title = ?, summary = ?, content = ?, final_rating = ?, rating_reason = ?, twitter_ref = ?, category = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
     WHERE id = ?
-  `).bind(title, summary, content, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
+  `).bind(title, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
   await syncTags(c.env.DB, post.id, tags);
   return c.json({ ok: true, status });
 });
@@ -919,7 +934,7 @@ app.get("/api/admin/export/markdown", async (c) => {
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
     SELECT
-      p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
+      p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.hazard_level, p.nsfw, p.cover_key, p.status, p.view_count, p.pinned_at, p.created_at, p.updated_at,
       u.username AS author_name,
       COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags
@@ -1817,6 +1832,7 @@ function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
     lines.push(`- 状态: ${markdownLine(row.status)}`);
     lines.push(`- 作者: ${markdownLine(row.author_name ?? "匿名")}`);
     if (isRating) lines.push(`- 危害等级: ${markdownLine(row.hazard_level)}`);
+    if (isRating && row.final_rating) lines.push(`- 最终等级: ${markdownLine(row.final_rating)}`);
     lines.push(`- NSFW: ${Number(row.nsfw ?? 0) ? "yes" : "no"}`);
     lines.push(`- 浏览量: ${markdownLine(row.view_count ?? 0)}`);
     if (row.pinned_at) lines.push(`- 置顶时间: ${markdownLine(row.pinned_at)}`);
@@ -1827,6 +1843,9 @@ function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
     lines.push("");
     if (row.summary) {
       lines.push(`> ${markdownLine(row.summary)}`, "");
+    }
+    if (isRating && row.final_rating) {
+      lines.push(`**最终等级：${markdownLine(row.final_rating)}**`, "");
     }
     if (isRating && row.rating_reason) {
       lines.push(`**评级原因：${markdownLine(row.rating_reason)}**`, "");
@@ -1862,6 +1881,7 @@ function normalizePostRow(row: Record<string, unknown>) {
     slug: String(row.slug),
     summary: String(row.summary ?? ""),
     content: String(row.content ?? ""),
+    finalRating: String(row.final_rating ?? ""),
     ratingReason: String(row.rating_reason ?? ""),
     twitterRef: String(row.twitter_ref ?? ""),
     category: String(row.category ?? "rating"),
@@ -2056,6 +2076,14 @@ function cleanName(value: unknown): string {
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function cleanFinalRating(value: unknown): string {
+  return String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, "").slice(0, MAX_FINAL_RATING_LENGTH);
+}
+
+function isValidFinalRating(value: string): boolean {
+  return /^[1-5][+-]?$/.test(value);
 }
 
 function normalizeSearchQuery(value: unknown): string {
