@@ -105,6 +105,8 @@ app.onError((err, c) => {
   return c.json({ error: "服务器暂时开小差了" }, 500);
 });
 
+app.use("*", enforceHttps);
+app.use("*", applySecurityHeaders);
 app.use("*", bindRequestContext);
 app.use("/api/*", async (c, next) => {
   if (!isSafeMethod(c.req.method) && !isSameOrigin(c)) {
@@ -933,6 +935,25 @@ app.get("*", (c) => {
   });
 });
 
+async function enforceHttps(c: AppContext, next: Next) {
+  if (shouldRedirectToHttps(c)) {
+    const url = new URL(c.req.url);
+    url.protocol = "https:";
+    return c.redirect(url.toString(), 308);
+  }
+  await next();
+}
+
+async function applySecurityHeaders(c: AppContext, next: Next) {
+  await next();
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  c.res.headers.set("X-Frame-Options", "SAMEORIGIN");
+  if (isHttps(c)) {
+    c.res.headers.set("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+  }
+}
+
 async function bindRequestContext(c: AppContext, next: Next) {
   const visitorId = getCookie(c, VISITOR_COOKIE) ?? crypto.randomUUID();
   setCookie(c, VISITOR_COOKIE, visitorId, {
@@ -1537,6 +1558,14 @@ function getSessionSecret(env: Env): string {
 
 function isHttps(c: AppContext): boolean {
   return new URL(c.req.url).protocol === "https:";
+}
+
+function shouldRedirectToHttps(c: AppContext): boolean {
+  const url = new URL(c.req.url);
+  if (url.protocol === "https:") return false;
+  const host = url.hostname.toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) return false;
+  return url.protocol === "http:";
 }
 
 function isSafeMethod(method: string): boolean {
