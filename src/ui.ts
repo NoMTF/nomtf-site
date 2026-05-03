@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-review-queue";
+const ASSET_VERSION = "20260503-soft-page-surfaces";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -353,6 +353,17 @@ a { color: inherit; }
   border-radius: 8px;
   background: rgba(255, 255, 255, .88);
   box-shadow: 0 10px 28px rgba(53, 83, 128, .08);
+}
+
+.page-section {
+  border: 0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, .58);
+  box-shadow: none;
+}
+
+.page-section + .page-section {
+  margin-top: 8px;
 }
 
 .filters {
@@ -1257,7 +1268,7 @@ export const appScript = String.raw`
     app.innerHTML =
       '<section class="detail">' +
         (post.coverUrl ? '<div class="detail-cover"><img src="' + escAttr(post.coverUrl) + '" alt=""></div>' : '') +
-        '<article class="panel detail-article">' +
+        '<article class="page-section detail-article">' +
           '<div class="detail-meta">' +
             '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
             '<span>' + esc(post.authorName) + '</span>' +
@@ -1272,7 +1283,7 @@ export const appScript = String.raw`
             '<button class="ghost-button" data-action="home">' + icon("back") + '<span>返回</span></button>' +
           '</div>' +
         '</article>' +
-        '<section class="panel comments">' +
+        '<section class="page-section comments">' +
           '<h2 class="section-title">回复</h2>' +
           renderCommentForm(post.id) +
           '<div class="comment-list">' + renderComments() + '</div>' +
@@ -1309,7 +1320,7 @@ export const appScript = String.raw`
     }
     var isAdmin = state.user && state.user.role === "admin";
     app.innerHTML =
-      '<section class="panel detail-article">' +
+      '<section class="page-section detail-article">' +
         '<h1>' + (isAdmin ? '发布评级' : '提交评级') + '</h1>' +
         '<p class="post-summary">' + (isAdmin ? '管理员发布后会直接公开。' : '投稿会先进入审核队列，通过后才会公开显示。') + '</p>' +
         '<form id="compose-form" class="form-grid">' +
@@ -1345,7 +1356,7 @@ export const appScript = String.raw`
     }
     app.innerHTML =
       '<section class="admin-grid">' +
-        '<div class="panel admin-section"><h1>管理员后台</h1><p class="post-summary">审核投稿、删除帖子、处理回复、限制访客、管理账号权限和调整页面文案。</p><div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div></div>' +
+        '<div class="page-section admin-section"><h1>管理员后台</h1><p class="post-summary">审核投稿、删除帖子、处理回复、限制访客、管理账号权限和调整页面文案。</p><div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button></div></div>' +
         renderAdminPosts() +
         renderAdminComments() +
         renderAdminUsers() +
@@ -1354,7 +1365,7 @@ export const appScript = String.raw`
   }
 
   function renderAdminPosts() {
-    return '<section class="panel admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
+    return '<section class="page-section admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
       state.admin.posts.map(function (p) {
         return '<div class="table-row">' +
           '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
@@ -1389,7 +1400,7 @@ export const appScript = String.raw`
   }
 
   function renderAdminComments() {
-    return '<section class="panel admin-section"><h2 class="section-title">回复</h2><div class="table">' +
+    return '<section class="page-section admin-section"><h2 class="section-title">回复</h2><div class="table">' +
       state.admin.comments.map(function (cm) {
         return '<div class="table-row">' +
           '<span>' + esc(excerpt(cm.content, 80)) + '</span>' +
@@ -1401,7 +1412,7 @@ export const appScript = String.raw`
   }
 
   function renderAdminUsers() {
-    return '<section class="panel admin-section"><h2 class="section-title">用户</h2><div class="table">' +
+    return '<section class="page-section admin-section"><h2 class="section-title">用户</h2><div class="table">' +
       state.admin.users.map(function (u) {
         return '<div class="table-row users">' +
           '<strong>' + esc(u.username) + '</strong>' +
@@ -1414,7 +1425,7 @@ export const appScript = String.raw`
   }
 
   function renderAdminPermissions() {
-    return '<section class="panel admin-section"><h2 class="section-title">访客权限</h2>' +
+    return '<section class="page-section admin-section"><h2 class="section-title">访客权限</h2>' +
       '<form id="permission-form" class="form-grid">' +
         '<div class="two-col">' +
           '<div class="field"><label>类型</label><select name="kind"><option value="visitor">visitor</option><option value="user">user</option><option value="ip_hash">ip_hash</option></select></div>' +
