@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-admin-tools-search";
+const ASSET_VERSION = "20260503-post-views-hot";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -501,6 +501,84 @@ a { color: inherit; }
   font-size: 12px;
 }
 
+.hot-posts {
+  margin: 0 0 22px;
+  padding: 16px;
+}
+
+.hot-posts-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.hot-posts-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.hot-posts-head span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hot-post-list {
+  display: grid;
+  gap: 8px;
+}
+
+.hot-post-item {
+  min-height: 58px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.hot-post-rank {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffd4e9, #bceaff);
+  font-weight: 900;
+}
+
+.hot-post-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hot-post-main strong,
+.hot-post-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hot-post-main span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hot-post-stats {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
@@ -599,6 +677,18 @@ a { color: inherit; }
   min-height: 0;
   align-items: start;
   box-shadow: 0 12px 30px rgba(53, 83, 128, .08);
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.post-card:hover,
+.post-card:focus-visible,
+.hot-post-item:hover,
+.hot-post-item:focus-visible {
+  border-color: #9fd7f7;
+  box-shadow: 0 18px 42px rgba(53, 83, 128, .14);
+  transform: translateY(-1px);
+  outline: 0;
 }
 
 .post-cover {
@@ -656,15 +746,6 @@ a { color: inherit; }
   margin: 8px 0 8px;
   font-size: clamp(20px, 2.4vw, 28px);
   line-height: 1.12;
-}
-
-.post-title button {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  font: inherit;
 }
 
 .post-summary {
@@ -777,6 +858,22 @@ a { color: inherit; }
 .content p {
   margin: 0 0 18px;
   overflow-wrap: anywhere;
+}
+
+.rating-reason {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.twitter-ref {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.twitter-ref a {
+  color: #536171;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 .content > img {
@@ -1428,6 +1525,26 @@ svg {
     gap: 12px;
   }
 
+  .hot-posts {
+    margin-bottom: 14px;
+    padding: 12px;
+  }
+
+  .hot-posts-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .hot-post-item {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .hot-post-stats {
+    grid-column: 2;
+    gap: 6px;
+  }
+
   .filters {
     top: 126px;
     z-index: 8;
@@ -1735,6 +1852,7 @@ export const appScript = String.raw`
     permission: "allow",
     termsVersion: "2026-04-28",
     posts: [],
+    hotPosts: [],
     filters: { q: "", level: "", tag: "" },
     post: null,
     comments: [],
@@ -1783,6 +1901,7 @@ export const appScript = String.raw`
   window.addEventListener("hashchange", route);
   document.addEventListener("click", onEditorClick, true);
   document.addEventListener("click", onClick);
+  document.addEventListener("keydown", onKeyDown);
   document.addEventListener("submit", onSubmit);
   document.addEventListener("input", onInput);
   document.addEventListener("focusin", onFocusIn);
@@ -1972,6 +2091,12 @@ export const appScript = String.raw`
     if (state.filters.tag) params.set("tag", state.filters.tag);
     var data = await api("/api/posts?" + params.toString());
     state.posts = data.posts || [];
+    try {
+      var hot = await api("/api/posts/hot?limit=6");
+      state.hotPosts = hot.posts || [];
+    } catch (_) {
+      state.hotPosts = [];
+    }
   }
 
   async function loadPost(slug) {
@@ -2026,10 +2151,30 @@ export const appScript = String.raw`
           '<div class="scale-list">' + Object.keys(levels).map(function (key) { return levelRow(key); }).join("") + '</div>' +
         '</aside>' +
       '</section>' +
+      renderHotPosts() +
       '<section class="layout">' +
         renderFilters() +
         '<div class="feed">' + renderFeed() + '</div>' +
       '</section>';
+  }
+
+  function renderHotPosts() {
+    var posts = state.hotPosts || [];
+    if (!posts.length) return "";
+    return '<section class="hot-posts panel">' +
+      '<div class="hot-posts-head"><h2>帖子热度排行</h2><span>浏览、点赞、回复综合排序</span></div>' +
+      '<div class="hot-post-list">' + posts.map(function (post, index) {
+        return '<article class="hot-post-item" data-action="open-post" data-slug="' + escAttr(post.slug) + '" role="link" tabindex="0">' +
+          '<span class="hot-post-rank">' + (index + 1) + '</span>' +
+          '<div class="hot-post-main"><strong>' + esc(post.title) + '</strong><span>' + esc(post.authorName) + ' · ' + dateText(post.createdAt) + '</span></div>' +
+          '<div class="hot-post-stats">' +
+            '<span class="mini-stat">' + icon("eye") + '<span class="mini-stat-value">' + esc(String(post.viewCount || 0)) + '</span></span>' +
+            '<span class="mini-stat">' + icon("heart") + '<span class="mini-stat-value">' + esc(String(post.likeCount || 0)) + '</span></span>' +
+            '<span class="mini-stat">' + icon("comment") + '<span class="mini-stat-value">' + esc(String(post.commentCount || 0)) + '</span></span>' +
+          '</div>' +
+        '</article>';
+      }).join("") + '</div>' +
+    '</section>';
   }
 
   function renderVisualEditor() {
@@ -2087,7 +2232,7 @@ export const appScript = String.raw`
     }
     nodes.forEach(function (node) {
       if (isEditorUi(node)) return;
-      if (override.textChanged === true && typeof override.text === "string" && canEditText(node)) {
+      if (override.textChanged === true && typeof override.text === "string" && canEditText(node) && !isDynamicContentNode(node)) {
         node.textContent = override.text;
       }
       if (override.placeholderChanged === true && typeof override.placeholder === "string" && "placeholder" in node) {
@@ -2095,6 +2240,10 @@ export const appScript = String.raw`
       }
       applyElementStyles(node, override.styles || {}, override.styleKeys || Object.keys(override.styles || {}));
     });
+  }
+
+  function isDynamicContentNode(node) {
+    return Boolean(node && node.closest && node.closest(".content, .post-summary, .comment, .tag, .mini-stat, .hot-post-main, .hot-post-stats"));
   }
 
   function applyElementStyles(node, styles, keys) {
@@ -2156,7 +2305,7 @@ export const appScript = String.raw`
     var cover = coverUrl
       ? '<img class="' + (!post.coverUrl ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt="">'
       : '<div class="cover-fallback"><span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span></div>';
-    return '<article class="post-card">' +
+    return '<article class="post-card" data-action="open-post" data-slug="' + escAttr(post.slug) + '" role="link" tabindex="0">' +
       '<div class="post-cover">' + cover + '</div>' +
       '<div class="post-body">' +
         '<div class="post-meta">' +
@@ -2165,9 +2314,10 @@ export const appScript = String.raw`
           '<span>' + dateText(post.createdAt) + '</span>' +
           (post.nsfw ? '<span class="nsfw-pill">NSFW</span>' : '') +
         '</div>' +
-        '<h2 class="post-title"><button data-action="open-post" data-slug="' + escAttr(post.slug) + '">' + esc(post.title) + '</button></h2>' +
+        '<h2 class="post-title">' + esc(post.title) + '</h2>' +
         '<p class="post-summary">' + esc(post.summary || excerpt(post.content)) + '</p>' +
         '<div class="tag-list">' + post.tags.map(tagButton).join("") +
+          '<span class="mini-stat">' + icon("eye") + '<span class="mini-stat-value">' + esc(String(post.viewCount || 0)) + '</span></span>' +
           '<span class="mini-stat">' + icon("heart") + '<span class="mini-stat-value">' + esc(String(post.likeCount)) + '</span></span>' +
           '<span class="mini-stat">' + icon("comment") + '<span class="mini-stat-value">' + esc(String(post.commentCount)) + '</span></span>' +
         '</div>' +
@@ -2195,11 +2345,12 @@ export const appScript = String.raw`
             '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
             '<span>' + esc(post.authorName) + '</span>' +
             '<span>' + dateText(post.createdAt) + '</span>' +
+            '<span class="mini-stat">' + icon("eye") + '<span class="mini-stat-value">' + esc(String(post.viewCount || 0)) + '</span></span>' +
             (post.nsfw ? '<span class="nsfw-pill">NSFW</span>' : '') +
           '</div>' +
           '<h1>' + esc(post.title) + '</h1>' +
           '<div class="tag-list">' + post.tags.map(tagButton).join("") + '</div>' +
-          '<div class="content">' + renderMarkdown(post.content) + '</div>' +
+          '<div class="content">' + renderPostContent(post) + '</div>' +
           '<div class="hero-actions">' +
             '<button class="' + (post.likedByMe ? "primary-button" : "ghost-button") + '" data-action="like" data-id="' + escAttr(post.id) + '">' + icon("heart") + '<span>' + esc(String(post.likeCount)) + '</span></button>' +
             '<button class="ghost-button" data-action="home">' + icon("back") + '<span>返回</span></button>' +
@@ -2255,6 +2406,10 @@ export const appScript = String.raw`
             '<div class="field"><label>标签</label><input name="tags" maxlength="160" placeholder="逗号分隔"></div>' +
           '</div>' +
           '<div class="field"><label>摘要</label><input name="summary" maxlength="240"></div>' +
+          '<div class="two-col">' +
+            '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required placeholder="为什么给这个等级"></div>' +
+            '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
+          '</div>' +
           '<div class="two-col">' +
             '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
             '<div class="field"><label>正文图片（最多 10 张）</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div id="body-image-preview" class="upload-preview-list"></div></div>' +
@@ -2315,7 +2470,7 @@ export const appScript = String.raw`
     return '<section class="page-section admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
       state.admin.posts.map(function (p) {
         return '<div class="table-row admin-post-row">' +
-          '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
+          '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + ' · 浏览 ' + esc(String(p.view_count || 0)) + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
           '<span>等级 ' + esc(String(p.hazard_level)) + '</span>' +
           '<span class="status-pill">' + statusText(p.status) + '</span>' +
           '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
@@ -2504,6 +2659,15 @@ export const appScript = String.raw`
     if (action === "admin-ban-ip") await adminBanIp(target.getAttribute("data-id"));
     if (action === "admin-revoke-sessions") await adminRevokeSessions(target.getAttribute("data-id"));
     if (action === "admin-delete-user") await adminDeleteUser(target.getAttribute("data-id"));
+  }
+
+  function onKeyDown(event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (!event.target.closest) return;
+    var target = event.target.closest('[data-action="open-post"][data-slug]');
+    if (!target || target !== event.target) return;
+    event.preventDefault();
+    location.hash = "#/post/" + encodeURIComponent(target.getAttribute("data-slug"));
   }
 
   function onEditorClick(event) {
@@ -3188,6 +3352,8 @@ export const appScript = String.raw`
         title: formData.get("title"),
         slug: formData.get("slug"),
         summary: formData.get("summary"),
+        ratingReason: formData.get("ratingReason"),
+        twitterRef: formData.get("twitterRef"),
         hazardLevel: Number(formData.get("hazardLevel")),
         tags: formData.get("tags"),
         nsfw: Boolean(formData.get("nsfw")),
@@ -3360,6 +3526,10 @@ export const appScript = String.raw`
               '</div>' +
               '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
               '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
+              '<div class="two-col">' +
+                '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required value="' + escAttr(post.ratingReason || "") + '"></div>' +
+                '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
+              '</div>' +
               '<div class="field"><label>封面 key</label><input name="coverKey" value="' + escAttr(post.coverKey || "") + '"><span class="field-hint">可直接粘贴 R2 key，也可以下面重新上传封面。</span></div>' +
               '<div class="field"><label>重新上传封面</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"></div>' +
               '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required>' + esc(post.content || "") + '</textarea></div>' +
@@ -3413,6 +3583,8 @@ export const appScript = String.raw`
         body: {
           title: formData.get("title"),
           summary: formData.get("summary"),
+          ratingReason: formData.get("ratingReason"),
+          twitterRef: formData.get("twitterRef"),
           content: formData.get("content"),
           hazardLevel: formData.get("hazardLevel"),
           status: formData.get("status"),
@@ -3596,6 +3768,48 @@ export const appScript = String.raw`
     return data;
   }
 
+  function renderPostContent(post) {
+    return renderRatingReason(post && post.ratingReason) + renderMarkdown(post && post.content) + renderTwitterRef(post && post.twitterRef);
+  }
+
+  function renderRatingReason(reason) {
+    reason = String(reason || "").trim();
+    if (!reason) return "";
+    return '<p class="rating-reason"><strong>评级原因：' + esc(reason) + '</strong></p>';
+  }
+
+  function renderTwitterRef(ref) {
+    var info = twitterInfo(ref);
+    if (!info.label) return "";
+    var value = info.href
+      ? '<a href="' + escAttr(info.href) + '" target="_blank" rel="noopener noreferrer">' + esc(info.label) + '</a>'
+      : '<span>' + esc(info.label) + '</span>';
+    return '<p class="twitter-ref">推特：' + value + '</p>';
+  }
+
+  function twitterInfo(ref) {
+    ref = String(ref || "").trim();
+    if (!ref) return { label: "", href: "" };
+    if (ref.charAt(0) === "@") {
+      var handle = ref.slice(1).replace(/[^A-Za-z0-9_]/g, "");
+      return handle ? { label: "@" + handle, href: "https://x.com/" + encodeURIComponent(handle) } : { label: ref, href: "" };
+    }
+    if (/^https?:\/\//i.test(ref)) {
+      try {
+        var url = new URL(ref);
+        var host = url.hostname.replace(/^www\./i, "").toLowerCase();
+        var first = url.pathname.split("/").filter(Boolean)[0] || "";
+        if ((host === "x.com" || host === "twitter.com") && first) {
+          return { label: "@" + first, href: "https://x.com/" + encodeURIComponent(first) };
+        }
+        return { label: ref, href: url.href };
+      } catch (_) {
+        return { label: ref, href: "" };
+      }
+    }
+    return { label: ref, href: "" };
+  }
+
   function renderMarkdown(text) {
     var images = [];
     var body = String(text || "").replace(/!\[([^\]]*)\]\((\/media\/[^)]+)\)/g, function (_, alt, url) {
@@ -3671,6 +3885,7 @@ export const appScript = String.raw`
       plus: '<path d="M12 5v14"></path><path d="M5 12h14"></path>',
       user: '<path d="M20 21a8 8 0 0 0-16 0"></path><circle cx="12" cy="7" r="4"></circle>',
       shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path>',
+      eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle>',
       heart: '<path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 1 0-7.6 7.6L12 21l8.8-8.8a5.4 5.4 0 0 0 0-7.6Z"></path>',
       comment: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>',
       trash: '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path>',

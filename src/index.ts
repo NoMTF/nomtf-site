@@ -82,6 +82,8 @@ const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
 const LOGIN_IP_LOCK_THRESHOLD = 20;
 const MAX_SEARCH_QUERY_LENGTH = 80;
+const MAX_RATING_REASON_LENGTH = 240;
+const MAX_TWITTER_REF_LENGTH = 160;
 const WEAK_PASSWORD_PARTS = [
   "123456",
   "123456789",
@@ -411,8 +413,8 @@ app.get("/api/posts", async (c) => {
   const params: Array<string | number> = [];
   if (q) {
     const like = `%${q}%`;
-    conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ?)");
-    params.push(like, like, like);
+    conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ? OR p.rating_reason LIKE ? OR p.twitter_ref LIKE ?)");
+    params.push(like, like, like, like, like);
   }
   if (level >= 1 && level <= 5) {
     conditions.push("p.hazard_level = ?");
@@ -427,7 +429,8 @@ app.get("/api/posts", async (c) => {
 
   const sql = `
     SELECT
-      p.id, p.title, p.slug, p.summary, p.content, p.hazard_level, p.nsfw, p.cover_key, p.status, p.created_at, p.updated_at,
+      p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
+      p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       u.username AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
@@ -448,6 +451,45 @@ app.get("/api/posts", async (c) => {
     page,
     limit
   });
+});
+
+app.get("/api/posts/hot", async (c) => {
+  const limited = await enforceFixedWindowRateLimit(c, {
+    bucket: "hot_posts_ip",
+    subject: ipSubject(c),
+    limit: 180,
+    windowSeconds: 60,
+    message: "热榜刷新太频繁了，请稍后再试"
+  });
+  if (limited) return limited;
+
+  const visitorId = c.get("visitorId");
+  const user = c.get("user");
+  const subjectType = user ? "user" : "visitor";
+  const subjectId = user?.id ?? visitorId;
+  const limit = Math.min(10, Math.max(3, Number(c.req.query("limit") ?? 6)));
+  const result = await c.env.DB.prepare(`
+    SELECT
+      p.id, p.title, p.slug, p.summary, p.content, p.rating_reason, p.twitter_ref,
+      p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
+      u.username AS author_name,
+      COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
+      COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
+      EXISTS(SELECT 1 FROM post_likes mine WHERE mine.post_id = p.id AND mine.subject_type = ? AND mine.subject_id = ?) AS liked_by_me,
+      COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags,
+      (
+        COALESCE(p.view_count, 0)
+        + COALESCE((SELECT COUNT(*) FROM post_likes pl2 WHERE pl2.post_id = p.id), 0) * 5
+        + COALESCE((SELECT COUNT(*) FROM comments cm2 WHERE cm2.post_id = p.id AND cm2.status = 'published'), 0) * 4
+      ) AS hot_score
+    FROM posts p
+    JOIN users u ON u.id = p.author_id
+    WHERE p.status = 'published'
+    ORDER BY hot_score DESC, p.created_at DESC
+    LIMIT ?
+  `).bind(subjectType, subjectId, limit).all<Record<string, unknown>>();
+
+  return c.json({ posts: (result.results ?? []).map(normalizePostRow) });
 });
 
 app.get("/api/posts/:slug", async (c) => {
@@ -482,6 +524,14 @@ app.get("/api/posts/:slug", async (c) => {
     return c.json({ error: "帖子不存在" }, 404);
   }
 
+  row.view_count = Number(row.view_count ?? 0) + 1;
+  c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE posts SET view_count = view_count + 1 WHERE id = ?")
+    .bind(String(row.id))
+    .run()
+    .catch((error) => {
+      console.error(JSON.stringify({ level: "warn", message: "view count update failed", error: String(error), postId: String(row.id) }));
+    }));
+
   const comments = await c.env.DB.prepare(`
     SELECT cm.id, cm.content, cm.parent_id, cm.created_at, cm.updated_at, cm.visitor_id, u.username AS author_name
     FROM comments cm
@@ -506,6 +556,8 @@ app.post("/api/posts", async (c) => {
   const title = cleanText(body.title, 120);
   const summary = cleanText(body.summary, 240);
   const content = cleanText(body.content, MAX_POST_BYTES);
+  const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
+  const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
   const hazardLevel = Number(body.hazardLevel ?? body.hazard_level);
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
@@ -521,6 +573,12 @@ app.post("/api/posts", async (c) => {
   if (!content || content.length < 10) {
     return c.json({ error: "正文至少 10 个字符" }, 400);
   }
+  if (!ratingReason) {
+    return c.json({ error: "评级原因必填" }, 400);
+  }
+  if (!twitterRef) {
+    return c.json({ error: "推特链接/用户名必填；没有就填占位符或 @用户名" }, 400);
+  }
   if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
     return c.json({ error: "评级需要是 1-5 级" }, 400);
   }
@@ -531,10 +589,10 @@ app.post("/api/posts", async (c) => {
   const id = crypto.randomUUID();
   const slug = await uniqueSlug(c.env.DB, requestedSlug || title);
   await c.env.DB.prepare(`
-    INSERT INTO posts (id, title, slug, summary, content, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO posts (id, title, slug, summary, content, rating_reason, twitter_ref, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
-    .bind(id, title, slug, summary, content, hazardLevel, nsfw ? 1 : 0, coverKey, status, user.id, now, now)
+    .bind(id, title, slug, summary, content, ratingReason, twitterRef, hazardLevel, nsfw ? 1 : 0, coverKey, status, user.id, now, now)
     .run();
 
   await syncTags(c.env.DB, id, tags);
@@ -554,6 +612,8 @@ app.patch("/api/posts/:id", async (c) => {
   const title = cleanText(body.title, 120);
   const summary = cleanText(body.summary, 240);
   const content = cleanText(body.content, MAX_POST_BYTES);
+  const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
+  const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
   const hazardLevel = Number(body.hazardLevel ?? body.hazard_level);
   const nsfw = Boolean(body.nsfw);
   const coverKey = optionalR2Key(body.coverKey);
@@ -565,11 +625,15 @@ app.patch("/api/posts/:id", async (c) => {
     return c.json({ error: "帖子字段不完整" }, 400);
   }
 
+  if (!ratingReason || !twitterRef) {
+    return c.json({ error: "评级原因和推特链接/用户名都必填" }, 400);
+  }
+
   await c.env.DB.prepare(`
     UPDATE posts
-    SET title = ?, summary = ?, content = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
+    SET title = ?, summary = ?, content = ?, rating_reason = ?, twitter_ref = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
     WHERE id = ?
-  `).bind(title, summary, content, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
+  `).bind(title, summary, content, ratingReason, twitterRef, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
   await syncTags(c.env.DB, post.id, tags);
   return c.json({ ok: true, status });
 });
@@ -709,7 +773,7 @@ app.get("/api/admin/posts", async (c) => {
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
     SELECT
-      p.id, p.title, p.slug, p.summary, p.hazard_level, p.nsfw, p.status,
+      p.id, p.title, p.slug, p.summary, p.hazard_level, p.nsfw, p.status, COALESCE(p.view_count, 0) AS view_count,
       p.created_at, p.updated_at, p.reviewed_at,
       u.username AS author_name,
       reviewer.username AS reviewed_by_name
@@ -1212,7 +1276,12 @@ function requireWriteAccess(c: AppContext): Response | null {
   return null;
 }
 
+function isAdminRequest(c: AppContext): boolean {
+  return c.get("user")?.role === "admin";
+}
+
 async function enforceContentWriteCooldown(c: AppContext, user: User): Promise<Response | null> {
+  if (user.role === "admin" || isAdminRequest(c)) return null;
   const message = `发帖或回复太快了，请 ${CONTENT_WRITE_COOLDOWN_SECONDS} 秒后再试`;
   const userCooldown = await requireCooldownAvailable(c, "content_write_user", userSubject(user), message);
   if (userCooldown) return userCooldown;
@@ -1233,6 +1302,7 @@ async function enforceRateLimits(c: AppContext, rules: RateLimitRule[]): Promise
 }
 
 async function enforceFixedWindowRateLimit(c: AppContext, rule: RateLimitRule): Promise<Response | null> {
+  if (isAdminRequest(c)) return null;
   const nowSeconds = Math.floor(Date.now() / 1000);
   const windowStart = Math.floor(nowSeconds / rule.windowSeconds) * rule.windowSeconds;
   const expiresAt = new Date((windowStart + rule.windowSeconds) * 1000).toISOString();
@@ -1256,6 +1326,7 @@ async function enforceFixedWindowRateLimit(c: AppContext, rule: RateLimitRule): 
 }
 
 async function requireCooldownAvailable(c: AppContext, bucket: string, subject: string, message: string): Promise<Response | null> {
+  if (isAdminRequest(c)) return null;
   const row = await c.env.DB.prepare("SELECT expires_at FROM rate_cooldowns WHERE bucket = ? AND subject = ?")
     .bind(bucket, subject)
     .first<{ expires_at: string }>();
@@ -1311,6 +1382,7 @@ async function currentUserAgentHash(c: AppContext): Promise<string> {
 }
 
 async function enforceLoginLock(c: AppContext, emailSubject: string, ipSubjectText: string): Promise<Response | null> {
+  if (isAdminRequest(c)) return null;
   const [emailRetry, ipRetry] = await Promise.all([
     loginLockSeconds(c.env.DB, emailSubject),
     loginLockSeconds(c.env.DB, ipSubjectText)
@@ -1543,11 +1615,14 @@ function normalizePostRow(row: Record<string, unknown>) {
     slug: String(row.slug),
     summary: String(row.summary ?? ""),
     content: String(row.content ?? ""),
+    ratingReason: String(row.rating_reason ?? ""),
+    twitterRef: String(row.twitter_ref ?? ""),
     hazardLevel: Number(row.hazard_level),
     nsfw: Boolean(Number(row.nsfw ?? 0)),
     coverKey,
     coverUrl: coverKey ? `/media/${coverKey}` : "",
     status: String(row.status ?? "published"),
+    viewCount: Number(row.view_count ?? 0),
     authorName: String(row.author_name ?? "匿名"),
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),
