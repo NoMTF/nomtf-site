@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-upload-previews";
+const ASSET_VERSION = "20260503-upload-guard";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -2627,14 +2627,14 @@ export const appScript = String.raw`
     var bodyPreview = document.getElementById("body-image-preview");
     var coverInput = form.querySelector('input[name="cover"]');
     var bodyInput = form.querySelector('input[name="bodyImages"]');
-    var coverFile = coverInput && coverInput.files && coverInput.files[0];
+    var coverFile = selectedInputFiles(coverInput)[0];
     if (coverPreview) {
       coverPreview.innerHTML = coverFile
         ? '<img src="' + escAttr(previewUrl(coverFile)) + '" alt="' + escAttr(coverFile.name || "封面预览") + '">'
         : '选择后在这里预览';
     }
     if (bodyPreview) {
-      var files = bodyInput && bodyInput.files ? Array.prototype.slice.call(bodyInput.files) : [];
+      var files = selectedInputFiles(bodyInput);
       bodyPreview.innerHTML = files.length
         ? files.map(function (file) {
             return '<span class="upload-preview-item"><img src="' + escAttr(previewUrl(file)) + '" alt="' + escAttr(file.name || "正文图片预览") + '"></span>';
@@ -2656,6 +2656,21 @@ export const appScript = String.raw`
     state.uploadPreviewUrls = [];
   }
 
+  function selectedInputFiles(input) {
+    if (!input || !input.files) return [];
+    return Array.prototype.slice.call(input.files).filter(function (file) {
+      return file && file.name;
+    });
+  }
+
+  function validateSelectedImages(files) {
+    files.forEach(function (file) {
+      if (!file.size) {
+        throw new Error("图片读取失败：" + (file.name || "未命名图片") + " 是空文件，请换相册/文件管理器重新选择");
+      }
+    });
+  }
+
   async function createPost(form) {
     var submitButton = form.querySelector('button[type="submit"]');
     var submitText = submitButton ? submitButton.querySelector("span") : null;
@@ -2665,8 +2680,12 @@ export const appScript = String.raw`
       if (submitText) submitText.textContent = "上传中";
       var formData = new FormData(form);
       var coverKey = "";
-      var coverFile = formData.get("cover");
-      var bodyImages = formData.getAll("bodyImages").filter(function (file) { return file && file.size; });
+      var coverInput = form.querySelector('input[name="cover"]');
+      var bodyInput = form.querySelector('input[name="bodyImages"]');
+      var coverFiles = selectedInputFiles(coverInput);
+      var coverFile = coverFiles[0] || null;
+      var bodyImages = selectedInputFiles(bodyInput);
+      validateSelectedImages(coverFiles.concat(bodyImages));
       var uploadCount = (coverFile && coverFile.size ? 1 : 0) + bodyImages.length;
       if (uploadCount) toast("正在上传 " + uploadCount + " 张图片");
       if (coverFile && coverFile.size) {

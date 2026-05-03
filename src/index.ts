@@ -446,6 +446,9 @@ app.post("/api/media", async (c) => {
   if (!isUploadedFile(file)) {
     return c.json({ error: "没有收到图片" }, 400);
   }
+  if (file.size <= 0) {
+    return c.json({ error: "图片文件为空，请重新选择" }, 400);
+  }
   if (file.size > MAX_IMAGE_BYTES) {
     return c.json({ error: "图片不能超过 15MB" }, 413);
   }
