@@ -47,6 +47,14 @@ type Variables = {
   ipHash: string;
 };
 
+type RateLimitRule = {
+  bucket: string;
+  subject: string;
+  limit: number;
+  windowSeconds: number;
+  message: string;
+};
+
 type AppEnv = {
   Bindings: Env;
   Variables: Variables;
@@ -62,7 +70,10 @@ const TERMS_VERSION = "2026-04-28";
 const MAX_POST_BYTES = 80_000;
 const MAX_COMMENT_BYTES = 4_000;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+const MAX_MULTIPART_IMAGE_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const PASSWORD_ITERATIONS = 100_000;
+const REGISTER_IP_COOLDOWN_SECONDS = 30 * 60;
+const CONTENT_WRITE_COOLDOWN_SECONDS = 30;
 const DEFAULT_UI_CONFIG: UiConfig = {
   searchPlaceholder: "搜索物品、现象、标签",
   searchWidthPx: 920,
@@ -78,6 +89,16 @@ app.use("*", bindRequestContext);
 app.use("/api/*", async (c, next) => {
   if (!isSafeMethod(c.req.method) && !isSameOrigin(c)) {
     return c.json({ error: "跨站请求被拒绝" }, 403);
+  }
+  if (!isSafeMethod(c.req.method)) {
+    const limited = await enforceFixedWindowRateLimit(c, {
+      bucket: "api_write_ip",
+      subject: ipSubject(c),
+      limit: 180,
+      windowSeconds: 60,
+      message: "请求太频繁了，请稍后再试"
+    });
+    if (limited) return limited;
   }
   await next();
 });
@@ -139,6 +160,15 @@ app.get("/api/site-settings", async (c) => {
 });
 
 app.post("/api/register", async (c) => {
+  const attemptLimited = await enforceFixedWindowRateLimit(c, {
+    bucket: "register_attempt_ip",
+    subject: ipSubject(c),
+    limit: 8,
+    windowSeconds: REGISTER_IP_COOLDOWN_SECONDS,
+    message: "这个网络注册太频繁了，请半小时后再试"
+  });
+  if (attemptLimited) return attemptLimited;
+
   const body = await readJson(c);
   const username = cleanName(body.username);
   const email = String(body.email ?? "").trim().toLowerCase();
@@ -154,6 +184,13 @@ app.post("/api/register", async (c) => {
   if (password.length < 8 || password.length > 128) {
     return c.json({ error: "密码需要 8-128 个字符" }, 400);
   }
+  const registeredRecently = await requireCooldownAvailable(
+    c,
+    "register_success_ip",
+    ipSubject(c),
+    "同一 IP 半小时内只能注册 1 个账号"
+  );
+  if (registeredRecently) return registeredRecently;
 
   const now = nowIso();
   const existingCount = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
@@ -173,6 +210,7 @@ app.post("/api/register", async (c) => {
     return c.json({ error: "昵称或邮箱已经被占用" }, 409);
   }
 
+  await setCooldown(c.env.DB, "register_success_ip", ipSubject(c), REGISTER_IP_COOLDOWN_SECONDS);
   await createSession(c, userId);
   return c.json({ ok: true, user: await getUserById(c.env.DB, userId) }, 201);
 });
@@ -181,6 +219,24 @@ app.post("/api/login", async (c) => {
   const body = await readJson(c);
   const email = String(body.email ?? "").trim().toLowerCase();
   const password = String(body.password ?? "");
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "login_ip",
+      subject: ipSubject(c),
+      limit: 30,
+      windowSeconds: 10 * 60,
+      message: "登录尝试太频繁了，请 10 分钟后再试"
+    },
+    {
+      bucket: "login_email",
+      subject: await hashedSubject(c, "email", email || "empty"),
+      limit: 10,
+      windowSeconds: 10 * 60,
+      message: "这个邮箱登录尝试太多了，请 10 分钟后再试"
+    }
+  ]);
+  if (limited) return limited;
+
   const user = await c.env.DB.prepare(
     "SELECT id, username, email, password_hash, role, status, created_at FROM users WHERE email = ?"
   ).bind(email).first<(User & { password_hash: string })>();
@@ -205,6 +261,15 @@ app.post("/api/logout", async (c) => {
 });
 
 app.post("/api/agreements", async (c) => {
+  const limited = await enforceFixedWindowRateLimit(c, {
+    bucket: "agreement_ip",
+    subject: ipSubject(c),
+    limit: 20,
+    windowSeconds: 60,
+    message: "确认请求太频繁了，请稍后再试"
+  });
+  if (limited) return limited;
+
   const visitorId = c.get("visitorId");
   const user = c.get("user");
   const userAgent = c.req.header("User-Agent") ?? "";
@@ -217,6 +282,15 @@ app.post("/api/agreements", async (c) => {
 });
 
 app.get("/api/posts", async (c) => {
+  const limited = await enforceFixedWindowRateLimit(c, {
+    bucket: "posts_read_ip",
+    subject: ipSubject(c),
+    limit: 240,
+    windowSeconds: 60,
+    message: "刷新太频繁了，请稍后再试"
+  });
+  if (limited) return limited;
+
   const q = String(c.req.query("q") ?? "").trim();
   const tag = String(c.req.query("tag") ?? "").trim();
   const level = Number(c.req.query("level") ?? 0);
@@ -272,6 +346,15 @@ app.get("/api/posts", async (c) => {
 });
 
 app.get("/api/posts/:slug", async (c) => {
+  const limited = await enforceFixedWindowRateLimit(c, {
+    bucket: "post_read_ip",
+    subject: ipSubject(c),
+    limit: 240,
+    windowSeconds: 60,
+    message: "打开帖子太频繁了，请稍后再试"
+  });
+  if (limited) return limited;
+
   const slug = c.req.param("slug");
   const visitorId = c.get("visitorId");
   const user = c.get("user");
@@ -336,6 +419,8 @@ app.post("/api/posts", async (c) => {
   if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
     return c.json({ error: "评级需要是 1-5 级" }, 400);
   }
+  const cooldown = await enforceContentWriteCooldown(c, user);
+  if (cooldown) return cooldown;
 
   const now = nowIso();
   const id = crypto.randomUUID();
@@ -387,6 +472,24 @@ app.patch("/api/posts/:id", async (c) => {
 app.post("/api/posts/:id/like", async (c) => {
   const denied = requireWriteAccess(c);
   if (denied) return denied;
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "like_actor",
+      subject: actorSubject(c),
+      limit: 60,
+      windowSeconds: 60,
+      message: "点赞太快了，请稍后再试"
+    },
+    {
+      bucket: "like_ip",
+      subject: ipSubject(c),
+      limit: 120,
+      windowSeconds: 60,
+      message: "这个网络点赞太频繁了，请稍后再试"
+    }
+  ]);
+  if (limited) return limited;
+
   const postId = c.req.param("id");
   const user = c.get("user");
   const subjectType = user ? "user" : "visitor";
@@ -420,6 +523,8 @@ app.post("/api/posts/:id/comments", async (c) => {
   if (content.length < 2) return c.json({ error: "回复太短了" }, 400);
   const post = await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'").bind(postId).first();
   if (!post) return c.json({ error: "帖子不存在" }, 404);
+  const cooldown = await enforceContentWriteCooldown(c, user);
+  if (cooldown) return cooldown;
 
   const now = nowIso();
   await c.env.DB.prepare(`
@@ -434,6 +539,27 @@ app.post("/api/media", async (c) => {
   if (user instanceof Response) return user;
   const denied = requireWriteAccess(c);
   if (denied) return denied;
+  const contentLength = Number(c.req.header("Content-Length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_MULTIPART_IMAGE_BYTES) {
+    return c.json({ error: "图片不能超过 15MB" }, 413);
+  }
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "media_upload_user",
+      subject: userSubject(user),
+      limit: 40,
+      windowSeconds: 10 * 60,
+      message: "图片上传太频繁了，请稍后再试"
+    },
+    {
+      bucket: "media_upload_ip",
+      subject: ipSubject(c),
+      limit: 80,
+      windowSeconds: 10 * 60,
+      message: "这个网络上传图片太频繁了，请稍后再试"
+    }
+  ]);
+  if (limited) return limited;
 
   let form: FormData;
   try {
@@ -766,6 +892,115 @@ function requireWriteAccess(c: AppContext): Response | null {
   if (c.get("permission") === "muted") return c.json({ error: "当前访客已被限制互动" }, 403);
   if (c.get("permission") === "banned") return c.json({ error: "访问已被管理员限制" }, 403);
   return null;
+}
+
+async function enforceContentWriteCooldown(c: AppContext, user: User): Promise<Response | null> {
+  const message = `发帖或回复太快了，请 ${CONTENT_WRITE_COOLDOWN_SECONDS} 秒后再试`;
+  const userCooldown = await requireCooldownAvailable(c, "content_write_user", userSubject(user), message);
+  if (userCooldown) return userCooldown;
+  const ipCooldown = await requireCooldownAvailable(c, "content_write_ip", ipSubject(c), message);
+  if (ipCooldown) return ipCooldown;
+
+  await setCooldown(c.env.DB, "content_write_user", userSubject(user), CONTENT_WRITE_COOLDOWN_SECONDS);
+  await setCooldown(c.env.DB, "content_write_ip", ipSubject(c), CONTENT_WRITE_COOLDOWN_SECONDS);
+  return null;
+}
+
+async function enforceRateLimits(c: AppContext, rules: RateLimitRule[]): Promise<Response | null> {
+  for (const rule of rules) {
+    const limited = await enforceFixedWindowRateLimit(c, rule);
+    if (limited) return limited;
+  }
+  return null;
+}
+
+async function enforceFixedWindowRateLimit(c: AppContext, rule: RateLimitRule): Promise<Response | null> {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const windowStart = Math.floor(nowSeconds / rule.windowSeconds) * rule.windowSeconds;
+  const expiresAt = new Date((windowStart + rule.windowSeconds) * 1000).toISOString();
+  const updatedAt = nowIso();
+
+  await c.env.DB.prepare(`
+    INSERT INTO rate_limits (bucket, subject, window_start, window_seconds, count, expires_at, updated_at)
+    VALUES (?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT(bucket, subject, window_start)
+    DO UPDATE SET count = count + 1, expires_at = excluded.expires_at, updated_at = excluded.updated_at
+  `).bind(rule.bucket, rule.subject, windowStart, rule.windowSeconds, expiresAt, updatedAt).run();
+
+  const row = await c.env.DB.prepare(`
+    SELECT count FROM rate_limits WHERE bucket = ? AND subject = ? AND window_start = ?
+  `).bind(rule.bucket, rule.subject, windowStart).first<{ count: number }>();
+
+  maybeScheduleRateLimitCleanup(c, rule.subject, windowStart);
+  const count = Number(row?.count ?? 0);
+  if (count <= rule.limit) return null;
+  return rateLimitedResponse(c, rule.message, windowStart + rule.windowSeconds - nowSeconds);
+}
+
+async function requireCooldownAvailable(c: AppContext, bucket: string, subject: string, message: string): Promise<Response | null> {
+  const row = await c.env.DB.prepare("SELECT expires_at FROM rate_cooldowns WHERE bucket = ? AND subject = ?")
+    .bind(bucket, subject)
+    .first<{ expires_at: string }>();
+  const retryAfter = secondsUntil(row?.expires_at ?? "");
+  if (retryAfter <= 0) return null;
+  return rateLimitedResponse(c, message, retryAfter);
+}
+
+async function setCooldown(db: D1Database, bucket: string, subject: string, seconds: number): Promise<void> {
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + seconds * 1000).toISOString();
+  await db.prepare(`
+    INSERT INTO rate_cooldowns (bucket, subject, expires_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(bucket, subject)
+    DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at
+  `).bind(bucket, subject, expiresAt, now.toISOString(), now.toISOString()).run();
+}
+
+function rateLimitedResponse(c: AppContext, message: string, retryAfterSeconds: number): Response {
+  const retryAfter = Math.max(1, Math.ceil(retryAfterSeconds));
+  const response = c.json({ error: message, retryAfterSeconds: retryAfter }, 429);
+  response.headers.set("Retry-After", String(retryAfter));
+  return response;
+}
+
+function secondsUntil(iso: string): number {
+  const target = Date.parse(iso);
+  if (!Number.isFinite(target)) return 0;
+  return Math.ceil((target - Date.now()) / 1000);
+}
+
+function ipSubject(c: AppContext): string {
+  return `ip:${c.get("ipHash") || c.get("visitorId")}`;
+}
+
+function userSubject(user: User): string {
+  return `user:${user.id}`;
+}
+
+function actorSubject(c: AppContext): string {
+  const user = c.get("user");
+  return user ? userSubject(user) : `visitor:${c.get("visitorId")}`;
+}
+
+async function hashedSubject(c: AppContext, kind: string, value: string): Promise<string> {
+  return `${kind}:${await sha256Hex(`${getSessionSecret(c.env)}:${kind}:${value}`)}`;
+}
+
+function maybeScheduleRateLimitCleanup(c: AppContext, subject: string, windowStart: number) {
+  const lastChar = subject.charCodeAt(subject.length - 1) || 0;
+  if (windowStart % 600 !== 0 || lastChar % 16 !== 0) return;
+  try {
+    c.executionCtx.waitUntil(cleanupExpiredRateLimitRows(c.env.DB, nowIso()).catch((error) => {
+      console.error(JSON.stringify({ level: "warn", message: "rate limit cleanup failed", error: String(error) }));
+    }));
+  } catch {
+  }
+}
+
+async function cleanupExpiredRateLimitRows(db: D1Database, cutoff: string): Promise<void> {
+  await db.prepare("DELETE FROM rate_limits WHERE expires_at < ?").bind(cutoff).run();
+  await db.prepare("DELETE FROM rate_cooldowns WHERE expires_at < ?").bind(cutoff).run();
 }
 
 async function readJson(c: AppContext): Promise<Record<string, unknown>> {
