@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260504-visual-image-upload";
+const ASSET_VERSION = "20260504-hide-nonrating-levels";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -2122,8 +2122,9 @@ export const appScript = String.raw`
   async function loadPosts() {
     var params = new URLSearchParams();
     if (state.filters.q) params.set("q", state.filters.q);
-    if (state.filters.category) params.set("category", state.filters.category);
-    if (state.filters.level) params.set("level", state.filters.level);
+    var category = state.filters.category || "rating";
+    if (category) params.set("category", category);
+    if (category === "rating" && state.filters.level) params.set("level", state.filters.level);
     if (state.filters.tag) params.set("tag", state.filters.tag);
     var data = await api("/api/posts?" + params.toString());
     state.posts = data.posts || [];
@@ -2326,6 +2327,7 @@ export const appScript = String.raw`
   }
 
   function renderFilters() {
+    var showLevelFilter = (state.filters.category || "rating") === "rating";
     var buttons = Object.keys(levels).map(function (key) {
       return '<button class="segment ' + (state.filters.level === key ? "active" : "") + '" data-action="filter-level" data-level="' + key + '">' + key + '</button>';
     }).join("");
@@ -2338,7 +2340,7 @@ export const appScript = String.raw`
     }).join("");
     return '<aside class="panel filters">' +
       '<div class="filter-group"><label>分类</label><div class="segmented category-tabs">' + categoryButtons + '</div></div>' +
-      '<div class="filter-group"><label>等级筛选</label><div class="segmented">' + buttons + '</div></div>' +
+      (showLevelFilter ? '<div class="filter-group"><label>等级筛选</label><div class="segmented">' + buttons + '</div></div>' : '') +
       '<div class="filter-group"><label>标签</label><input id="tag-filter" value="' + esc(state.filters.tag) + '" placeholder="输入标签名"></div>' +
       '<button class="ghost-button" data-action="apply-tag">' + icon("search") + '<span>筛选</span></button> ' +
       '<button class="plain-button" data-action="clear-filters">清空</button>' +
