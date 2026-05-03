@@ -424,7 +424,7 @@ app.get("/api/posts", async (c) => {
     conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ? OR p.rating_reason LIKE ? OR p.twitter_ref LIKE ?)");
     params.push(like, like, like, like, like);
   }
-  if (level >= 1 && level <= 5) {
+  if (category === "rating" && level >= 1 && level <= 5) {
     conditions.push("p.hazard_level = ?");
     params.push(level);
   }
@@ -564,10 +564,11 @@ app.post("/api/posts", async (c) => {
   const title = cleanText(body.title, 120);
   const summary = cleanText(body.summary, 240);
   const content = cleanText(body.content, MAX_POST_BYTES);
-  const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
-  const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
   const category = cleanPostCategory(body.category, "rating");
-  const hazardLevel = Number(body.hazardLevel ?? body.hazard_level);
+  const isRating = category === "rating";
+  const ratingReason = isRating ? cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH) : "";
+  const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
+  const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
   const coverKey = optionalR2Key(body.coverKey);
@@ -583,14 +584,16 @@ app.post("/api/posts", async (c) => {
   if (!content || content.length < 10) {
     return c.json({ error: "正文至少 10 个字符" }, 400);
   }
-  if (!ratingReason) {
-    return c.json({ error: "评级原因必填" }, 400);
-  }
-  if (!twitterRef) {
-    return c.json({ error: "推特链接/用户名必填；没有就填占位符或 @用户名" }, 400);
-  }
-  if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
-    return c.json({ error: "评级需要是 1-5 级" }, 400);
+  if (isRating) {
+    if (!ratingReason) {
+      return c.json({ error: "评级原因必填" }, 400);
+    }
+    if (!twitterRef) {
+      return c.json({ error: "推特链接/用户名必填；没有就填占位符或 @用户名" }, 400);
+    }
+    if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
+      return c.json({ error: "评级需要是 1-5 级" }, 400);
+    }
   }
   const cooldown = await enforceContentWriteCooldown(c, user);
   if (cooldown) return cooldown;
@@ -631,19 +634,22 @@ app.post("/api/submissions", async (c) => {
   const title = cleanText(body.title, 120);
   const summary = cleanText(body.summary, 240);
   const content = cleanText(body.content, MAX_POST_BYTES);
-  const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
-  const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
   const category = cleanPostCategory(body.category, "rating");
-  const hazardLevel = Number(body.hazardLevel ?? body.hazard_level ?? 1);
+  const isRating = category === "rating";
+  const ratingReason = isRating ? cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH) : "";
+  const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
+  const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
   const tags = cleanTags(body.tags);
   if (category === "about") return c.json({ error: "关于页只能由管理员在后台发布" }, 403);
   if (!title || title.length < 2) return c.json({ error: "标题太短了" }, 400);
   if (!content || content.length < 10) return c.json({ error: "正文至少 10 个字符" }, 400);
-  if (!ratingReason) return c.json({ error: "评级原因必填" }, 400);
-  if (!twitterRef) return c.json({ error: "推特链接/用户名必填；没有就填占位符或 @用户名" }, 400);
-  if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) return c.json({ error: "评级需要是 1-5 级" }, 400);
+  if (isRating) {
+    if (!ratingReason) return c.json({ error: "评级原因必填" }, 400);
+    if (!twitterRef) return c.json({ error: "推特链接/用户名必填；没有就填占位符或 @用户名" }, 400);
+    if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) return c.json({ error: "评级需要是 1-5 级" }, 400);
+  }
 
   const authorId = await getSubmissionAuthorId(c.env.DB);
   if (!authorId) return c.json({ error: "没有可用的管理员作者账号" }, 500);
@@ -674,10 +680,11 @@ app.patch("/api/posts/:id", async (c) => {
   const title = cleanText(body.title, 120);
   const summary = cleanText(body.summary, 240);
   const content = cleanText(body.content, MAX_POST_BYTES);
-  const ratingReason = cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH);
-  const twitterRef = cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH);
   const category = cleanPostCategory(body.category, "rating");
-  const hazardLevel = Number(body.hazardLevel ?? body.hazard_level);
+  const isRating = category === "rating";
+  const ratingReason = isRating ? cleanText(body.ratingReason ?? body.rating_reason, MAX_RATING_REASON_LENGTH) : "";
+  const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
+  const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
   const nsfw = Boolean(body.nsfw);
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
@@ -687,12 +694,17 @@ app.patch("/api/posts/:id", async (c) => {
   const status: PostStatus = user.role === "admin"
     ? cleanPostStatus(body.status, "published")
     : (category === "talk" ? "published" : "pending");
-  if (!title || !content || !Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
+  if (!title || !content) {
     return c.json({ error: "帖子字段不完整" }, 400);
   }
 
-  if (!ratingReason || !twitterRef) {
-    return c.json({ error: "评级原因和推特链接/用户名都必填" }, 400);
+  if (isRating) {
+    if (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5) {
+      return c.json({ error: "评级需要是 1-5 级" }, 400);
+    }
+    if (!ratingReason || !twitterRef) {
+      return c.json({ error: "评级原因和推特链接/用户名都必填" }, 400);
+    }
   }
 
   await c.env.DB.prepare(`
@@ -1795,6 +1807,7 @@ function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
   ];
   for (const row of rows) {
     const tags = String(row.tags ?? "").split("|").filter(Boolean);
+    const isRating = String(row.category ?? "rating") === "rating";
     lines.push("---", "");
     lines.push(`# ${markdownLine(row.title)}`);
     lines.push("");
@@ -1803,7 +1816,7 @@ function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
     lines.push(`- 分类: ${markdownLine(row.category ?? "rating")}`);
     lines.push(`- 状态: ${markdownLine(row.status)}`);
     lines.push(`- 作者: ${markdownLine(row.author_name ?? "匿名")}`);
-    lines.push(`- 危害等级: ${markdownLine(row.hazard_level)}`);
+    if (isRating) lines.push(`- 危害等级: ${markdownLine(row.hazard_level)}`);
     lines.push(`- NSFW: ${Number(row.nsfw ?? 0) ? "yes" : "no"}`);
     lines.push(`- 浏览量: ${markdownLine(row.view_count ?? 0)}`);
     if (row.pinned_at) lines.push(`- 置顶时间: ${markdownLine(row.pinned_at)}`);
@@ -1815,11 +1828,11 @@ function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
     if (row.summary) {
       lines.push(`> ${markdownLine(row.summary)}`, "");
     }
-    if (row.rating_reason) {
+    if (isRating && row.rating_reason) {
       lines.push(`**评级原因：${markdownLine(row.rating_reason)}**`, "");
     }
     lines.push(stripImagesToFileNames(String(row.content ?? "")), "");
-    if (row.twitter_ref) {
+    if (isRating && row.twitter_ref) {
       lines.push(`<span style="color:#777">推特：${markdownLine(row.twitter_ref)}</span>`, "");
     }
   }

@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260504-hide-nonrating-levels";
+const ASSET_VERSION = "20260504-category-specific-fields";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -370,6 +370,10 @@ a { color: inherit; }
   gap: 24px;
   align-items: stretch;
   margin-bottom: 24px;
+}
+
+.hero.hero-simple {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .hero-copy {
@@ -1335,6 +1339,10 @@ a { color: inherit; }
 
 .hidden { display: none !important; }
 
+.nonrating-post-form .category-tag-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 svg {
   width: 18px;
   height: 18px;
@@ -2172,27 +2180,35 @@ export const appScript = String.raw`
 
   function renderHome() {
     var app = document.getElementById("app");
+    var category = state.filters.category || "rating";
+    var ratingPage = isRatingCategory(category);
     app.innerHTML =
-      '<section class="hero">' +
+      '<section class="hero ' + (ratingPage ? "" : "hero-simple") + '">' +
         '<div class="hero-copy">' +
           '<h1 class="sr-only">NoMTF 不药娘网</h1>' +
           '<div class="hero-banner"><img src="' + siteAssets.banner + '" alt="NoMTF 不药娘网"></div>' +
-          '<p class="hero-lede">把物品、现象和网络梗放进娱乐评级表，按“对社会的危害等级”做 1-5 级荒诞归档。本站禁止针对现实个人或受保护群体的仇恨、骚扰与煽动。</p>' +
+          '<p class="hero-lede">' + homeIntro(category) + '</p>' +
           '<div class="hero-actions">' +
-            '<button class="primary-button" data-action="new-post">' + icon("plus") + '<span>发布评级</span></button>' +
+            '<button class="primary-button" data-action="new-post">' + icon("plus") + '<span>' + (ratingPage ? '发布评级' : '发布内容') + '</span></button>' +
             '<button class="ghost-button" data-action="terms">' + icon("doc") + '<span>用户协议</span></button>' +
           '</div>' +
         '</div>' +
-        '<aside class="rating-board">' +
+        (ratingPage ? '<aside class="rating-board">' +
           '<h2>危害等级</h2>' +
           '<div class="scale-list">' + Object.keys(levels).map(function (key) { return levelRow(key); }).join("") + '</div>' +
-        '</aside>' +
+        '</aside>' : '') +
       '</section>' +
       renderHotPosts() +
       '<section class="layout">' +
         renderFilters() +
         '<div class="feed">' + renderFeed() + '</div>' +
       '</section>';
+  }
+
+  function homeIntro(category) {
+    if (category === "about") return "这里存放站点说明、规则更新和管理员公告。";
+    if (category === "talk") return "这里是杂谈内容，适合发布轻量讨论、碎碎念和普通帖子。";
+    return "把物品、现象和网络梗放进娱乐评级表，按“对社会的危害等级”做 1-5 级荒诞归档。本站禁止针对现实个人或受保护群体的仇恨、骚扰与煽动。";
   }
 
   function renderHotPosts() {
@@ -2349,21 +2365,22 @@ export const appScript = String.raw`
 
   function renderFeed() {
     if (!state.posts.length) {
-      return '<div class="empty-state">现在还没有符合条件的评级。</div>';
+      return '<div class="empty-state">现在还没有符合条件的' + (isRatingCategory(state.filters.category) ? '评级' : '内容') + '。</div>';
     }
     return state.posts.map(postCard).join("");
   }
 
   function postCard(post) {
-    var coverUrl = post.coverUrl || defaultLevelCover(post.hazardLevel);
+    var isRating = isRatingCategory(post.category);
+    var coverUrl = post.coverUrl || (isRating ? defaultLevelCover(post.hazardLevel) : "");
     var cover = coverUrl
-      ? '<img class="' + (!post.coverUrl ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt="">'
-      : '<div class="cover-fallback"><span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span></div>';
+      ? '<img class="' + (!post.coverUrl && isRating ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt="">'
+      : '<div class="cover-fallback"><span class="status-pill">' + categoryText(post.category) + '</span></div>';
     return '<article class="post-card" data-action="open-post" data-slug="' + escAttr(post.slug) + '" role="link" tabindex="0">' +
       '<div class="post-cover">' + cover + '</div>' +
       '<div class="post-body">' +
         '<div class="post-meta">' +
-          '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
+          (isRating ? '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' : '') +
           '<span class="status-pill">' + categoryText(post.category) + '</span>' +
           (post.pinnedAt ? '<span class="status-pill">置顶</span>' : '') +
           '<span>' + esc(post.authorName) + '</span>' +
@@ -2392,13 +2409,14 @@ export const appScript = String.raw`
       app.innerHTML = '<div class="empty-state">帖子不存在。</div>';
       return;
     }
-    var coverUrl = post.coverUrl || defaultLevelCover(post.hazardLevel);
+    var isRating = isRatingCategory(post.category);
+    var coverUrl = post.coverUrl || (isRating ? defaultLevelCover(post.hazardLevel) : "");
     app.innerHTML =
       '<section class="detail">' +
-        (coverUrl ? '<div class="detail-cover"><img class="' + (!post.coverUrl ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt=""></div>' : '') +
+        (coverUrl ? '<div class="detail-cover"><img class="' + (!post.coverUrl && isRating ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt=""></div>' : '') +
         '<article class="page-section detail-article">' +
           '<div class="detail-meta">' +
-            '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' +
+            (isRating ? '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' : '') +
             '<span class="status-pill">' + categoryText(post.category) + '</span>' +
             (post.pinnedAt ? '<span class="status-pill">置顶</span>' : '') +
             '<span>' + esc(post.authorName) + '</span>' +
@@ -2447,24 +2465,25 @@ export const appScript = String.raw`
       return;
     }
     var isAdmin = state.user && state.user.role === "admin";
+    var defaultCategory = state.filters.category === "talk" || (isAdmin && state.filters.category === "about") ? state.filters.category : "rating";
     app.innerHTML =
       '<section class="page-section detail-article">' +
-        '<h1>' + (isAdmin ? '发布评级' : '提交评级') + '</h1>' +
-        '<p class="post-summary">' + (isAdmin ? '管理员发布后会直接公开。' : '投稿会先进入审核队列，通过后才会公开显示。') + '</p>' +
+        '<h1>' + (isAdmin ? '发布内容' : '提交内容') + '</h1>' +
+        '<p class="post-summary">' + (isAdmin ? '管理员发布后会直接公开。' : '评级投稿会先进入审核；杂谈会直接公开。') + '</p>' +
         '<form id="compose-form" class="form-grid">' +
           '<div class="two-col">' +
             '<div class="field"><label>标题</label><input name="title" maxlength="120" required></div>' +
             '<div class="field"><label>自定义 slug</label><input name="slug" maxlength="90" placeholder="可留空"></div>' +
           '</div>' +
-          '<div class="field"><label>分类</label><select name="category"><option value="rating">评级页（普通投稿需审核）</option><option value="talk">杂谈页（无需审核）</option>' + (isAdmin ? '<option value="about">关于页（仅管理员）</option>' : '') + '</select></div>' +
-          '<div class="two-col">' +
-            '<div class="field"><label>危害等级</label><select name="hazardLevel"><option value="1">1 轻微整活</option><option value="2">2 低度扰动</option><option value="3">3 中度混乱</option><option value="4">4 高度警报</option><option value="5">5 终极危害</option></select></div>' +
+          '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(defaultCategory, "rating") + '>评级页（普通投稿需审核）</option><option value="talk" ' + selected(defaultCategory, "talk") + '>杂谈页（无需审核）</option>' + (isAdmin ? '<option value="about" ' + selected(defaultCategory, "about") + '>关于页（仅管理员）</option>' : '') + '</select></div>' +
+          '<div class="two-col category-tag-row">' +
+            '<div class="field" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required><option value="1">1 轻微整活</option><option value="2">2 低度扰动</option><option value="3">3 中度混乱</option><option value="4">4 高度警报</option><option value="5">5 终极危害</option></select></div>' +
             '<div class="field"><label>标签</label><input name="tags" maxlength="160" placeholder="逗号分隔"></div>' +
           '</div>' +
           '<div class="field"><label>摘要</label><input name="summary" maxlength="240"></div>' +
-          '<div class="two-col">' +
-            '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required placeholder="为什么给这个等级"></div>' +
-            '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
+          '<div class="two-col" data-rating-only>' +
+            '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required data-rating-required placeholder="为什么给这个等级"></div>' +
+            '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required data-rating-required placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
           '</div>' +
           '<div class="two-col">' +
             '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
@@ -2472,9 +2491,10 @@ export const appScript = String.raw`
           '</div>' +
           '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会组成图集追加到末尾"></textarea></div>' +
           '<label class="post-meta"><input name="nsfw" type="checkbox"> NSFW / 激烈表达提示</label>' +
-          '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("plus") + '<span>' + (isAdmin ? '发布' : '提交审核') + '</span></button><button class="ghost-button" type="button" data-action="home">取消</button></div>' +
+          '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("plus") + '<span>' + (isAdmin ? '发布' : '提交') + '</span></button><button class="ghost-button" type="button" data-action="home">取消</button></div>' +
         '</form>' +
       '</section>';
+    syncPostCategoryFields(document.getElementById("compose-form"));
   }
 
   function renderAdmin() {
@@ -2525,9 +2545,10 @@ export const appScript = String.raw`
   function renderAdminPosts() {
     return '<section class="page-section admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
       state.admin.posts.map(function (p) {
+        var isRating = isRatingCategory(p.category);
         return '<div class="table-row admin-post-row">' +
           '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + ' · 浏览 ' + esc(String(p.view_count || 0)) + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
-          '<span>' + categoryText(p.category) + ' · 等级 ' + esc(String(p.hazard_level)) + (p.pinned_at ? ' · 置顶' : '') + '</span>' +
+          '<span>' + categoryText(p.category) + (isRating ? ' · 等级 ' + esc(String(p.hazard_level)) : '') + (p.pinned_at ? ' · 置顶' : '') + '</span>' +
           '<span class="status-pill">' + statusText(p.status) + '</span>' +
           '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="ghost-button" data-action="' + (p.pinned_at ? 'admin-unpin-post' : 'admin-pin-post') + '" data-id="' + escAttr(p.id) + '">' + icon("pin") + '<span>' + (p.pinned_at ? '取消置顶' : '置顶') + '</span></button><button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
         '</div>';
@@ -2560,6 +2581,10 @@ export const appScript = String.raw`
   function categoryText(category) {
     var map = { rating: "评级", about: "关于", talk: "杂谈" };
     return esc(map[category] || "评级");
+  }
+
+  function isRatingCategory(category) {
+    return (category || "rating") === "rating";
   }
 
   function renderAdminComments() {
@@ -3342,6 +3367,11 @@ export const appScript = String.raw`
 
   document.addEventListener("change", async function (event) {
     var target = event.target;
+    var postForm = target.closest && target.closest("#compose-form, #admin-post-edit-form");
+    if (postForm && target.name === "category") {
+      syncPostCategoryFields(postForm);
+      return;
+    }
     if (target.closest && target.closest("#compose-form") && (target.name === "cover" || target.name === "bodyImages")) {
       updateUploadPreviews();
       return;
@@ -3418,6 +3448,20 @@ export const appScript = String.raw`
     toast("已退出");
     location.hash = "#/";
     await route();
+  }
+
+  function syncPostCategoryFields(form) {
+    if (!form) return;
+    var categoryInput = form.querySelector('[name="category"]');
+    var isRating = isRatingCategory(categoryInput ? categoryInput.value : "rating");
+    form.classList.toggle("nonrating-post-form", !isRating);
+    Array.prototype.forEach.call(form.querySelectorAll("[data-rating-only]"), function (node) {
+      node.classList.toggle("hidden", !isRating);
+    });
+    Array.prototype.forEach.call(form.querySelectorAll("[data-rating-required]"), function (node) {
+      node.required = isRating;
+      node.disabled = !isRating;
+    });
   }
 
   function updateUploadPreviews() {
@@ -3540,19 +3584,22 @@ export const appScript = String.raw`
         uploadedBodyImages.push({ key: uploaded.key, url: uploaded.url, alt: imageAlt });
         content += "\n\n![" + imageAlt + "](" + uploaded.url + ")\n";
       }
+      var category = String(formData.get("category") || "rating");
       var payload = {
         title: formData.get("title"),
         slug: formData.get("slug"),
-        category: formData.get("category"),
+        category: category,
         summary: formData.get("summary"),
-        ratingReason: formData.get("ratingReason"),
-        twitterRef: formData.get("twitterRef"),
-        hazardLevel: Number(formData.get("hazardLevel")),
         tags: formData.get("tags"),
         nsfw: Boolean(formData.get("nsfw")),
         coverKey: coverKey,
         content: content
       };
+      if (isRatingCategory(category)) {
+        payload.ratingReason = formData.get("ratingReason");
+        payload.twitterRef = formData.get("twitterRef");
+        payload.hazardLevel = Number(formData.get("hazardLevel"));
+      }
       var created = await api("/api/posts", { method: "POST", body: payload });
       if (created.status === "published") {
         toast(uploadCount ? "图片已上传，帖子已发布" : "已发布");
@@ -3725,16 +3772,16 @@ export const appScript = String.raw`
                 '<div class="field"><label>标题</label><input name="title" maxlength="120" required value="' + escAttr(post.title) + '"></div>' +
                 '<div class="field"><label>slug</label><input name="slug" readonly value="' + escAttr(post.slug) + '"><span class="field-hint">slug 暂不直接改，避免旧链接失效。</span></div>' +
               '</div>' +
-              '<div class="two-col">' +
-                '<div class="field"><label>危害等级</label><select name="hazardLevel">' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
+              '<div class="two-col category-tag-row">' +
+                '<div class="field" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required>' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
                 '<div class="field"><label>状态</label><select name="status">' + ["pending","published","hidden","rejected","draft"].map(function (status) { return '<option value="' + status + '" ' + selected(post.status, status) + '>' + statusText(status) + '</option>'; }).join("") + '</select></div>' +
               '</div>' +
               '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(post.category || "rating", "rating") + '>评级页</option><option value="talk" ' + selected(post.category || "rating", "talk") + '>杂谈页</option><option value="about" ' + selected(post.category || "rating", "about") + '>关于页</option></select></div>' +
               '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
               '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
-              '<div class="two-col">' +
-                '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required value="' + escAttr(post.ratingReason || "") + '"></div>' +
-                '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
+              '<div class="two-col" data-rating-only>' +
+                '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required data-rating-required value="' + escAttr(post.ratingReason || "") + '"></div>' +
+                '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required data-rating-required value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
               '</div>' +
               '<div class="field"><label>封面 key</label><input name="coverKey" value="' + escAttr(post.coverKey || "") + '"><span class="field-hint">可直接粘贴 R2 key，也可以下面重新上传封面。</span></div>' +
               '<div class="field"><label>重新上传封面</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"></div>' +
@@ -3745,6 +3792,7 @@ export const appScript = String.raw`
           '</div>' +
         '</div>'
       );
+      syncPostCategoryFields(document.getElementById("admin-post-edit-form"));
     } catch (error) {
       toast(error.message);
     }
@@ -3784,21 +3832,25 @@ export const appScript = String.raw`
         var uploaded = await uploadFile(coverFile);
         coverKey = uploaded.key;
       }
+      var category = String(formData.get("category") || "rating");
+      var payload = {
+        title: formData.get("title"),
+        summary: formData.get("summary"),
+        category: category,
+        content: formData.get("content"),
+        status: formData.get("status"),
+        tags: formData.get("tags"),
+        coverKey: coverKey,
+        nsfw: formData.get("nsfw") === "on"
+      };
+      if (isRatingCategory(category)) {
+        payload.ratingReason = formData.get("ratingReason");
+        payload.twitterRef = formData.get("twitterRef");
+        payload.hazardLevel = formData.get("hazardLevel");
+      }
       await api("/api/posts/" + form.getAttribute("data-id"), {
         method: "PATCH",
-        body: {
-          title: formData.get("title"),
-          summary: formData.get("summary"),
-          category: formData.get("category"),
-          ratingReason: formData.get("ratingReason"),
-          twitterRef: formData.get("twitterRef"),
-          content: formData.get("content"),
-          hazardLevel: formData.get("hazardLevel"),
-          status: formData.get("status"),
-          tags: formData.get("tags"),
-          coverKey: coverKey,
-          nsfw: formData.get("nsfw") === "on"
-        }
+        body: payload
       });
       closeModal();
       toast("帖子已保存");
@@ -3977,7 +4029,10 @@ export const appScript = String.raw`
   }
 
   function renderPostContent(post) {
-    return renderRatingReason(post && post.ratingReason) + renderMarkdown(post && post.content) + renderTwitterRef(post && post.twitterRef);
+    if (!post) return "";
+    return (isRatingCategory(post.category) ? renderRatingReason(post.ratingReason) : "") +
+      renderMarkdown(post.content) +
+      (isRatingCategory(post.category) ? renderTwitterRef(post.twitterRef) : "");
   }
 
   function renderRatingReason(reason) {
