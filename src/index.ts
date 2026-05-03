@@ -61,7 +61,7 @@ const VISITOR_COOKIE = "nomtf_vid";
 const TERMS_VERSION = "2026-04-28";
 const MAX_POST_BYTES = 80_000;
 const MAX_COMMENT_BYTES = 4_000;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const PASSWORD_ITERATIONS = 100_000;
 const DEFAULT_UI_CONFIG: UiConfig = {
   searchPlaceholder: "搜索物品、现象、标签",
@@ -446,17 +446,18 @@ app.post("/api/media", async (c) => {
   if (!isUploadedFile(file)) {
     return c.json({ error: "没有收到图片" }, 400);
   }
-  const contentType = file.type || "application/octet-stream";
-  if (!contentType.startsWith("image/")) {
-    return c.json({ error: "只能上传图片" }, 415);
-  }
   if (file.size > MAX_IMAGE_BYTES) {
-    return c.json({ error: "图片不能超过 5MB" }, 413);
+    return c.json({ error: "图片不能超过 15MB" }, 413);
   }
 
-  const ext = extensionFromName(file.name);
-  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`;
   const bytes = await file.arrayBuffer();
+  const contentType = inferImageContentType(file.name, file.type, bytes);
+  if (!contentType) {
+    return c.json({ error: "只能上传 JPG、PNG、GIF、WebP 或 AVIF 图片" }, 415);
+  }
+
+  const ext = extensionFromName(file.name) || extensionFromContentType(contentType);
+  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`;
   await c.env.MEDIA.put(key, bytes, {
     httpMetadata: {
       contentType,
@@ -1090,6 +1091,45 @@ function isUploadedFile(value: unknown): value is File {
 function extensionFromName(name: string): string {
   const match = name.toLowerCase().match(/\.(png|jpe?g|gif|webp|avif)$/);
   return match ? match[0].replace(".jpeg", ".jpg") : "";
+}
+
+function extensionFromContentType(contentType: string): string {
+  const map: Record<string, string> = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/avif": ".avif"
+  };
+  return map[contentType] ?? "";
+}
+
+function inferImageContentType(name: string, declaredType: string, bytes: ArrayBuffer): string {
+  const normalized = declaredType.toLowerCase().split(";")[0].trim();
+  if (["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif"].includes(normalized)) {
+    return normalized;
+  }
+
+  const ext = extensionFromName(name);
+  if (ext === ".jpg") return "image/jpeg";
+  if (ext === ".png") return "image/png";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".avif") return "image/avif";
+
+  const header = new Uint8Array(bytes.slice(0, 16));
+  if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return "image/jpeg";
+  if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47) return "image/png";
+  if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46) return "image/gif";
+  if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46
+    && header[8] === 0x57 && header[9] === 0x45 && header[10] === 0x42 && header[11] === 0x50) {
+    return "image/webp";
+  }
+  if (header[4] === 0x66 && header[5] === 0x74 && header[6] === 0x79 && header[7] === 0x70
+    && header[8] === 0x61 && header[9] === 0x76 && header[10] === 0x69 && header[11] === 0x66) {
+    return "image/avif";
+  }
+  return "";
 }
 
 export default app;

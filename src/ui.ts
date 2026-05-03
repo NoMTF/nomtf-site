@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-rating-art";
+const ASSET_VERSION = "20260503-upload-previews";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -87,6 +87,11 @@ button, input, textarea, select {
 
 button {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: .68;
 }
 
 a { color: inherit; }
@@ -701,6 +706,47 @@ a { color: inherit; }
   padding: 9px 10px;
 }
 
+.upload-preview {
+  border: 1px dashed #c8dff5;
+  border-radius: 8px;
+  min-height: 92px;
+  background: linear-gradient(135deg, rgba(255, 240, 248, .8), rgba(232, 247, 255, .85));
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.upload-preview img {
+  width: 100%;
+  height: 100%;
+  max-height: 180px;
+  display: block;
+  object-fit: contain;
+}
+
+.upload-preview-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.upload-preview-item {
+  aspect-ratio: 1;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.upload-preview-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .field textarea {
   min-height: 170px;
   resize: vertical;
@@ -1253,6 +1299,10 @@ svg {
     font-size: 15px;
   }
 
+  .upload-preview-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .admin-grid {
     gap: 18px;
   }
@@ -1390,6 +1440,7 @@ export const appScript = String.raw`
     post: null,
     comments: [],
     admin: null,
+    uploadPreviewUrls: [],
     ui: {
       searchPlaceholder: "搜索物品、现象、标签",
       searchWidthPx: 920,
@@ -1451,6 +1502,7 @@ export const appScript = String.raw`
 
   async function route() {
     var hash = location.hash || "#/";
+    if (hash !== "#/new") clearUploadPreviewUrls();
     if (hash === "#/admin/editor") {
       if (!state.user || state.user.role !== "admin") {
         renderHeader();
@@ -1816,8 +1868,8 @@ export const appScript = String.raw`
           '</div>' +
           '<div class="field"><label>摘要</label><input name="summary" maxlength="240"></div>' +
           '<div class="two-col">' +
-            '<div class="field"><label>封面图</label><input name="cover" type="file" accept="image/*"></div>' +
-            '<div class="field"><label>正文图片</label><input name="bodyImages" type="file" accept="image/*" multiple></div>' +
+            '<div class="field"><label>封面图</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
+            '<div class="field"><label>正文图片</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div id="body-image-preview" class="upload-preview-list"></div></div>' +
           '</div>' +
           '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会追加到末尾"></textarea></div>' +
           '<label class="post-meta"><input name="nsfw" type="checkbox"> NSFW / 激烈表达提示</label>' +
@@ -2515,6 +2567,10 @@ export const appScript = String.raw`
 
   document.addEventListener("change", async function (event) {
     var target = event.target;
+    if (target.closest && target.closest("#compose-form") && (target.name === "cover" || target.name === "bodyImages")) {
+      updateUploadPreviews();
+      return;
+    }
     var action = target.getAttribute && target.getAttribute("data-action");
     if (action === "user-role") {
       await api("/api/admin/users/" + target.getAttribute("data-id"), { method: "PATCH", body: { role: target.value } });
@@ -2563,19 +2619,65 @@ export const appScript = String.raw`
     await route();
   }
 
+  function updateUploadPreviews() {
+    var form = document.getElementById("compose-form");
+    if (!form) return;
+    clearUploadPreviewUrls();
+    var coverPreview = document.getElementById("cover-preview");
+    var bodyPreview = document.getElementById("body-image-preview");
+    var coverInput = form.querySelector('input[name="cover"]');
+    var bodyInput = form.querySelector('input[name="bodyImages"]');
+    var coverFile = coverInput && coverInput.files && coverInput.files[0];
+    if (coverPreview) {
+      coverPreview.innerHTML = coverFile
+        ? '<img src="' + escAttr(previewUrl(coverFile)) + '" alt="' + escAttr(coverFile.name || "封面预览") + '">'
+        : '选择后在这里预览';
+    }
+    if (bodyPreview) {
+      var files = bodyInput && bodyInput.files ? Array.prototype.slice.call(bodyInput.files) : [];
+      bodyPreview.innerHTML = files.length
+        ? files.map(function (file) {
+            return '<span class="upload-preview-item"><img src="' + escAttr(previewUrl(file)) + '" alt="' + escAttr(file.name || "正文图片预览") + '"></span>';
+          }).join("")
+        : '<span class="field-hint">选择正文图片后会在这里预览，并在提交时追加到正文末尾。</span>';
+    }
+  }
+
+  function previewUrl(file) {
+    var url = URL.createObjectURL(file);
+    state.uploadPreviewUrls.push(url);
+    return url;
+  }
+
+  function clearUploadPreviewUrls() {
+    (state.uploadPreviewUrls || []).forEach(function (url) {
+      URL.revokeObjectURL(url);
+    });
+    state.uploadPreviewUrls = [];
+  }
+
   async function createPost(form) {
+    var submitButton = form.querySelector('button[type="submit"]');
+    var submitText = submitButton ? submitButton.querySelector("span") : null;
+    var oldSubmitText = submitText ? submitText.textContent : "";
     try {
+      if (submitButton) submitButton.disabled = true;
+      if (submitText) submitText.textContent = "上传中";
       var formData = new FormData(form);
       var coverKey = "";
       var coverFile = formData.get("cover");
+      var bodyImages = formData.getAll("bodyImages").filter(function (file) { return file && file.size; });
+      var uploadCount = (coverFile && coverFile.size ? 1 : 0) + bodyImages.length;
+      if (uploadCount) toast("正在上传 " + uploadCount + " 张图片");
       if (coverFile && coverFile.size) {
         var cover = await uploadFile(coverFile);
         coverKey = cover.key;
       }
       var content = String(formData.get("content") || "");
-      var bodyImages = formData.getAll("bodyImages").filter(function (file) { return file && file.size; });
+      var uploadedBodyImages = [];
       for (var i = 0; i < bodyImages.length; i += 1) {
         var uploaded = await uploadFile(bodyImages[i]);
+        uploadedBodyImages.push(uploaded);
         content += "\n\n![" + bodyImages[i].name.replace(/[\\[\\]()]/g, "") + "](" + uploaded.url + ")\n";
       }
       var payload = {
@@ -2590,16 +2692,35 @@ export const appScript = String.raw`
       };
       var created = await api("/api/posts", { method: "POST", body: payload });
       if (created.status === "published") {
-        toast("已发布");
+        toast(uploadCount ? "图片已上传，帖子已发布" : "已发布");
         location.hash = "#/post/" + encodeURIComponent(created.slug);
       } else {
-        toast("已提交审核，等待管理员通过");
-        location.hash = "#/";
-        await route();
+        toast(uploadCount ? "图片已上传，投稿已进入审核；通过后会公开显示" : "已提交审核，等待管理员通过");
+        renderPendingSubmission(payload, created, coverKey ? "/media/" + coverKey : "", uploadedBodyImages);
       }
     } catch (error) {
       toast(error.message);
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+      if (submitText) submitText.textContent = oldSubmitText;
     }
+  }
+
+  function renderPendingSubmission(payload, created, coverUrl, uploadedBodyImages) {
+    var app = document.getElementById("app");
+    clearUploadPreviewUrls();
+    var bodyImages = uploadedBodyImages || [];
+    app.innerHTML =
+      '<section class="page-section detail-article">' +
+        '<h1>投稿已进入审核</h1>' +
+        '<p class="post-summary">图片和正文已经保存。管理员通过后，封面图和正文插图会在公开页面显示。</p>' +
+        '<div class="detail-meta"><span class="status-pill">待审核</span><span>' + esc(payload.title || created.slug || "") + '</span></div>' +
+        (coverUrl ? '<div class="detail-cover"><img src="' + escAttr(coverUrl) + '" alt="封面预览"></div>' : '') +
+        (bodyImages.length ? '<h2 class="section-title">正文图片</h2><div class="upload-preview-list">' + bodyImages.map(function (image) {
+          return '<span class="upload-preview-item"><img src="' + escAttr(image.url) + '" alt="正文图片预览"></span>';
+        }).join("") + '</div>' : '') +
+        '<div class="hero-actions"><button class="primary-button" data-action="home">' + icon("back") + '<span>回首页</span></button></div>' +
+      '</section>';
   }
 
   async function createComment(form) {
