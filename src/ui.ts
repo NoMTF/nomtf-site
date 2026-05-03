@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260504-category-specific-fields";
+const ASSET_VERSION = "20260504-category-fields-hard-hide";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -2466,24 +2466,28 @@ export const appScript = String.raw`
     }
     var isAdmin = state.user && state.user.role === "admin";
     var defaultCategory = state.filters.category === "talk" || (isAdmin && state.filters.category === "about") ? state.filters.category : "rating";
+    var defaultRating = isRatingCategory(defaultCategory);
+    var ratingHiddenClass = defaultRating ? "" : " hidden";
+    var ratingRequiredAttrs = defaultRating ? " required" : " disabled";
+    var ratingDisabledAttr = defaultRating ? "" : " disabled";
     app.innerHTML =
       '<section class="page-section detail-article">' +
         '<h1>' + (isAdmin ? '发布内容' : '提交内容') + '</h1>' +
         '<p class="post-summary">' + (isAdmin ? '管理员发布后会直接公开。' : '评级投稿会先进入审核；杂谈会直接公开。') + '</p>' +
-        '<form id="compose-form" class="form-grid">' +
+        '<form id="compose-form" class="form-grid' + (defaultRating ? "" : " nonrating-post-form") + '">' +
           '<div class="two-col">' +
             '<div class="field"><label>标题</label><input name="title" maxlength="120" required></div>' +
             '<div class="field"><label>自定义 slug</label><input name="slug" maxlength="90" placeholder="可留空"></div>' +
           '</div>' +
           '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(defaultCategory, "rating") + '>评级页（普通投稿需审核）</option><option value="talk" ' + selected(defaultCategory, "talk") + '>杂谈页（无需审核）</option>' + (isAdmin ? '<option value="about" ' + selected(defaultCategory, "about") + '>关于页（仅管理员）</option>' : '') + '</select></div>' +
           '<div class="two-col category-tag-row">' +
-            '<div class="field" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required><option value="1">1 轻微整活</option><option value="2">2 低度扰动</option><option value="3">3 中度混乱</option><option value="4">4 高度警报</option><option value="5">5 终极危害</option></select></div>' +
+            '<div class="field' + ratingHiddenClass + '" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required' + ratingDisabledAttr + '><option value="1">1 轻微整活</option><option value="2">2 低度扰动</option><option value="3">3 中度混乱</option><option value="4">4 高度警报</option><option value="5">5 终极危害</option></select></div>' +
             '<div class="field"><label>标签</label><input name="tags" maxlength="160" placeholder="逗号分隔"></div>' +
           '</div>' +
           '<div class="field"><label>摘要</label><input name="summary" maxlength="240"></div>' +
-          '<div class="two-col" data-rating-only>' +
-            '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required data-rating-required placeholder="为什么给这个等级"></div>' +
-            '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required data-rating-required placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
+          '<div class="two-col' + ratingHiddenClass + '" data-rating-only>' +
+            '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" data-rating-required' + ratingRequiredAttrs + ' placeholder="为什么给这个等级"></div>' +
+            '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" data-rating-required' + ratingRequiredAttrs + ' placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
           '</div>' +
           '<div class="two-col">' +
             '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
@@ -2494,7 +2498,10 @@ export const appScript = String.raw`
           '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("plus") + '<span>' + (isAdmin ? '发布' : '提交') + '</span></button><button class="ghost-button" type="button" data-action="home">取消</button></div>' +
         '</form>' +
       '</section>';
-    syncPostCategoryFields(document.getElementById("compose-form"));
+    var composeForm = document.getElementById("compose-form");
+    syncPostCategoryFields(composeForm);
+    requestAnimationFrame(function () { syncPostCategoryFields(composeForm); });
+    setTimeout(function () { syncPostCategoryFields(composeForm); }, 250);
   }
 
   function renderAdmin() {
@@ -3763,25 +3770,29 @@ export const appScript = String.raw`
     try {
       var data = await api("/api/admin/posts/" + postId);
       var post = data.post;
+      var postRating = isRatingCategory(post.category);
+      var ratingHiddenClass = postRating ? "" : " hidden";
+      var ratingRequiredAttrs = postRating ? " required" : " disabled";
+      var ratingDisabledAttr = postRating ? "" : " disabled";
       showModal(
         '<div class="modal large">' +
           '<div class="modal-head"><h2>编辑帖子</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
           '<div class="modal-body">' +
-            '<form id="admin-post-edit-form" class="form-grid" data-id="' + escAttr(post.id) + '">' +
+            '<form id="admin-post-edit-form" class="form-grid' + (postRating ? "" : " nonrating-post-form") + '" data-id="' + escAttr(post.id) + '">' +
               '<div class="two-col">' +
                 '<div class="field"><label>标题</label><input name="title" maxlength="120" required value="' + escAttr(post.title) + '"></div>' +
                 '<div class="field"><label>slug</label><input name="slug" readonly value="' + escAttr(post.slug) + '"><span class="field-hint">slug 暂不直接改，避免旧链接失效。</span></div>' +
               '</div>' +
               '<div class="two-col category-tag-row">' +
-                '<div class="field" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required>' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
+                '<div class="field' + ratingHiddenClass + '" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required' + ratingDisabledAttr + '>' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
                 '<div class="field"><label>状态</label><select name="status">' + ["pending","published","hidden","rejected","draft"].map(function (status) { return '<option value="' + status + '" ' + selected(post.status, status) + '>' + statusText(status) + '</option>'; }).join("") + '</select></div>' +
               '</div>' +
               '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(post.category || "rating", "rating") + '>评级页</option><option value="talk" ' + selected(post.category || "rating", "talk") + '>杂谈页</option><option value="about" ' + selected(post.category || "rating", "about") + '>关于页</option></select></div>' +
               '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
               '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
-              '<div class="two-col" data-rating-only>' +
-                '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" required data-rating-required value="' + escAttr(post.ratingReason || "") + '"></div>' +
-                '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" required data-rating-required value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
+              '<div class="two-col' + ratingHiddenClass + '" data-rating-only>' +
+                '<div class="field"><label>评级原因（必填）</label><input name="ratingReason" maxlength="240" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.ratingReason || "") + '"></div>' +
+                '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
               '</div>' +
               '<div class="field"><label>封面 key</label><input name="coverKey" value="' + escAttr(post.coverKey || "") + '"><span class="field-hint">可直接粘贴 R2 key，也可以下面重新上传封面。</span></div>' +
               '<div class="field"><label>重新上传封面</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"></div>' +
