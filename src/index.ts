@@ -708,6 +708,25 @@ app.get("/api/admin/posts", async (c) => {
   return c.json({ posts: result.results ?? [] });
 });
 
+app.get("/api/admin/posts/:id", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const row = await c.env.DB.prepare(`
+    SELECT
+      p.*,
+      u.username AS author_name,
+      COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
+      COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
+      0 AS liked_by_me,
+      COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags
+    FROM posts p
+    JOIN users u ON u.id = p.author_id
+    WHERE p.id = ? AND p.status != 'deleted'
+  `).bind(c.req.param("id")).first<Record<string, unknown>>();
+  if (!row) return c.json({ error: "帖子不存在" }, 404);
+  return c.json({ post: normalizePostRow(row) });
+});
+
 app.patch("/api/admin/posts/:id/status", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
@@ -779,13 +798,37 @@ app.patch("/api/admin/users/:id", async (c) => {
   const admin = requireAdmin(c);
   if (admin instanceof Response) return admin;
   const body = await readJson(c);
+  const username = body.username === undefined ? null : cleanName(body.username);
+  const email = body.email === undefined ? null : String(body.email ?? "").trim().toLowerCase();
   const status = ["active", "muted", "banned"].includes(String(body.status)) ? String(body.status) : null;
   const role = ["user", "admin"].includes(String(body.role)) ? String(body.role) : null;
-  if (!status && !role) return c.json({ error: "没有可更新字段" }, 400);
+  if (!status && !role && username === null && email === null) return c.json({ error: "没有可更新字段" }, 400);
   if (c.req.param("id") === admin.id && status === "banned") return c.json({ error: "不能封禁自己" }, 400);
+  if (c.req.param("id") === admin.id && role === "user") return c.json({ error: "不能移除自己的管理员权限" }, 400);
+  if (username !== null && (username.length < 2 || username.length > 24)) {
+    return c.json({ error: "昵称需要 2-24 个字符" }, 400);
+  }
+  if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return c.json({ error: "邮箱格式不对" }, 400);
+  }
+  const target = await c.env.DB.prepare("SELECT id, role FROM users WHERE id = ?")
+    .bind(c.req.param("id"))
+    .first<{ id: string; role: Role }>();
+  if (!target) return c.json({ error: "用户不存在" }, 404);
+  if (target.role === "admin" && role === "user" && await isLastAdmin(c.env.DB, target.id)) {
+    return c.json({ error: "不能移除最后一个管理员" }, 400);
+  }
 
   const pieces: string[] = [];
   const values: string[] = [];
+  if (username !== null) {
+    pieces.push("username = ?");
+    values.push(username);
+  }
+  if (email !== null) {
+    pieces.push("email = ?");
+    values.push(email);
+  }
   if (status) {
     pieces.push("status = ?");
     values.push(status);
@@ -794,9 +837,30 @@ app.patch("/api/admin/users/:id", async (c) => {
     pieces.push("role = ?");
     values.push(role);
   }
-  await c.env.DB.prepare(`UPDATE users SET ${pieces.join(", ")}, updated_at = ? WHERE id = ?`)
-    .bind(...values, nowIso(), c.req.param("id"))
-    .run();
+  try {
+    await c.env.DB.prepare(`UPDATE users SET ${pieces.join(", ")}, updated_at = ? WHERE id = ?`)
+      .bind(...values, nowIso(), c.req.param("id"))
+      .run();
+  } catch {
+    return c.json({ error: "昵称或邮箱已被占用" }, 409);
+  }
+  return c.json({ ok: true });
+});
+
+app.delete("/api/admin/users/:id", async (c) => {
+  const admin = requireAdmin(c);
+  if (admin instanceof Response) return admin;
+  const targetId = c.req.param("id");
+  if (targetId === admin.id) return c.json({ error: "不能删除自己" }, 400);
+  const target = await c.env.DB.prepare("SELECT id, role FROM users WHERE id = ?")
+    .bind(targetId)
+    .first<{ id: string; role: Role }>();
+  if (!target) return c.json({ error: "用户不存在" }, 404);
+  if (target.role === "admin" && await isLastAdmin(c.env.DB, target.id)) {
+    return c.json({ error: "不能删除最后一个管理员" }, 400);
+  }
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetId).run();
+  await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(targetId).run();
   return c.json({ ok: true });
 });
 
@@ -927,6 +991,13 @@ async function getUserById(db: D1Database, id: string): Promise<User | null> {
   return db.prepare("SELECT id, username, email, role, status, created_at FROM users WHERE id = ?")
     .bind(id)
     .first<User>();
+}
+
+async function isLastAdmin(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status != 'banned' AND id != ?")
+    .bind(userId)
+    .first<{ count: number }>();
+  return Number(row?.count ?? 0) === 0;
 }
 
 async function createSession(c: AppContext, userId: string) {

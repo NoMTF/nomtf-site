@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-account-security";
+const ASSET_VERSION = "20260503-admin-edit";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -2012,7 +2012,7 @@ export const appScript = String.raw`
           '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
           '<span>等级 ' + esc(String(p.hazard_level)) + '</span>' +
           '<span class="status-pill">' + statusText(p.status) + '</span>' +
-          '<div class="table-actions">' + renderPostReviewActions(p) + '<button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
+          '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
         '</div>';
       }).join("") + '</div></section>';
   }
@@ -2061,7 +2061,9 @@ export const appScript = String.raw`
           '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
           '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
           '<span class="admin-meta">' + dateText(u.created_at) + '</span>' +
+          '<button class="ghost-button" data-action="admin-edit-user" data-id="' + escAttr(u.id) + '">' + icon("doc") + '<span>编辑</span></button>' +
           '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
+          '<button class="danger-button" data-action="admin-delete-user" data-id="' + escAttr(u.id) + '">' + icon("trash") + '<span>删除</span></button>' +
         '</div>';
       }).join("") + '</div></section>';
   }
@@ -2176,10 +2178,13 @@ export const appScript = String.raw`
     if (action === "admin-approve-post") await adminSetPostStatus(target.getAttribute("data-id"), "published");
     if (action === "admin-reject-post") await adminSetPostStatus(target.getAttribute("data-id"), "rejected");
     if (action === "admin-hide-post") await adminSetPostStatus(target.getAttribute("data-id"), "hidden");
+    if (action === "admin-edit-post") await showAdminPostEditor(target.getAttribute("data-id"));
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
     if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
     if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
+    if (action === "admin-edit-user") showAdminUserEditor(target.getAttribute("data-id"));
     if (action === "admin-revoke-sessions") await adminRevokeSessions(target.getAttribute("data-id"));
+    if (action === "admin-delete-user") await adminDeleteUser(target.getAttribute("data-id"));
   }
 
   function onEditorClick(event) {
@@ -2640,6 +2645,16 @@ export const appScript = String.raw`
       await createPermission(event.target);
       return;
     }
+    if (event.target.id === "admin-post-edit-form") {
+      event.preventDefault();
+      await saveAdminPost(event.target);
+      return;
+    }
+    if (event.target.id === "admin-user-edit-form") {
+      event.preventDefault();
+      await saveAdminUser(event.target);
+      return;
+    }
     if (event.target.id === "ui-search-form") {
       event.preventDefault();
       await saveSearchUi(event.target);
@@ -2997,6 +3012,122 @@ export const appScript = String.raw`
 
   function defaultLevelCover(level) {
     return siteAssets.levelCovers[Number(level)] || "";
+  }
+
+  async function showAdminPostEditor(postId) {
+    try {
+      var data = await api("/api/admin/posts/" + postId);
+      var post = data.post;
+      showModal(
+        '<div class="modal large">' +
+          '<div class="modal-head"><h2>编辑帖子</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
+          '<div class="modal-body">' +
+            '<form id="admin-post-edit-form" class="form-grid" data-id="' + escAttr(post.id) + '">' +
+              '<div class="two-col">' +
+                '<div class="field"><label>标题</label><input name="title" maxlength="120" required value="' + escAttr(post.title) + '"></div>' +
+                '<div class="field"><label>slug</label><input name="slug" readonly value="' + escAttr(post.slug) + '"><span class="field-hint">slug 暂不直接改，避免旧链接失效。</span></div>' +
+              '</div>' +
+              '<div class="two-col">' +
+                '<div class="field"><label>危害等级</label><select name="hazardLevel">' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
+                '<div class="field"><label>状态</label><select name="status">' + ["pending","published","hidden","rejected","draft"].map(function (status) { return '<option value="' + status + '" ' + selected(post.status, status) + '>' + statusText(status) + '</option>'; }).join("") + '</select></div>' +
+              '</div>' +
+              '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
+              '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
+              '<div class="field"><label>封面 key</label><input name="coverKey" value="' + escAttr(post.coverKey || "") + '"><span class="field-hint">可直接粘贴 R2 key，也可以下面重新上传封面。</span></div>' +
+              '<div class="field"><label>重新上传封面</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"></div>' +
+              '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required>' + esc(post.content || "") + '</textarea></div>' +
+              '<label class="post-meta"><input name="nsfw" type="checkbox" ' + (post.nsfw ? "checked" : "") + '> NSFW / 激烈表达提示</label>' +
+              '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存帖子</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
+            '</form>' +
+          '</div>' +
+        '</div>'
+      );
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  function showAdminUserEditor(userId) {
+    var user = (state.admin && state.admin.users || []).find(function (item) { return item.id === userId; });
+    if (!user) {
+      toast("用户不存在");
+      return;
+    }
+    showModal(
+      '<div class="modal">' +
+        '<div class="modal-head"><h2>编辑用户</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
+        '<div class="modal-body">' +
+          '<form id="admin-user-edit-form" class="form-grid" data-id="' + escAttr(user.id) + '">' +
+            '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required value="' + escAttr(user.username || "") + '"></div>' +
+            '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
+            '<div class="two-col">' +
+              '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>' +
+              '<div class="field"><label>状态</label><select name="status"><option value="active" ' + selected(user.status, "active") + '>active</option><option value="muted" ' + selected(user.status, "muted") + '>muted</option><option value="banned" ' + selected(user.status, "banned") + '>banned</option></select></div>' +
+            '</div>' +
+            '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存用户</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
+          '</form>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  async function saveAdminPost(form) {
+    try {
+      var formData = new FormData(form);
+      var coverFile = formData.get("cover");
+      var coverKey = String(formData.get("coverKey") || "").trim();
+      if (coverFile && coverFile.name) {
+        var uploaded = await uploadFile(coverFile);
+        coverKey = uploaded.key;
+      }
+      await api("/api/posts/" + form.getAttribute("data-id"), {
+        method: "PATCH",
+        body: {
+          title: formData.get("title"),
+          summary: formData.get("summary"),
+          content: formData.get("content"),
+          hazardLevel: formData.get("hazardLevel"),
+          status: formData.get("status"),
+          tags: formData.get("tags"),
+          coverKey: coverKey,
+          nsfw: formData.get("nsfw") === "on"
+        }
+      });
+      closeModal();
+      toast("帖子已保存");
+      await loadAdmin();
+      renderAdmin();
+      syncEditorChrome();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function saveAdminUser(form) {
+    try {
+      var formData = new FormData(form);
+      await api("/api/admin/users/" + form.getAttribute("data-id"), {
+        method: "PATCH",
+        body: {
+          username: formData.get("username"),
+          email: formData.get("email"),
+          role: formData.get("role"),
+          status: formData.get("status")
+        }
+      });
+      closeModal();
+      toast("用户已保存");
+      await route();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function adminDeleteUser(userId) {
+    var user = (state.admin && state.admin.users || []).find(function (item) { return item.id === userId; });
+    var label = user ? (user.username + " / " + user.email) : userId;
+    if (!confirm("确定删除用户 " + label + "？这个操作会删除账号，并可能移除该用户发布的内容。")) return;
+    await adminDelete("/api/admin/users/" + userId);
   }
 
   function showAccountSecurity() {
