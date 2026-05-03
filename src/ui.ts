@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-upload-guard";
+const ASSET_VERSION = "20260503-gallery-ui-2";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -494,35 +494,41 @@ a { color: inherit; }
   overflow: hidden;
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
-  min-height: 176px;
+  min-height: 0;
+  align-items: start;
   box-shadow: 0 12px 30px rgba(53, 83, 128, .08);
 }
 
 .post-cover {
   position: relative;
-  min-height: 176px;
+  width: 100%;
+  min-height: 0;
+  align-self: start;
+  max-height: 260px;
   background: linear-gradient(135deg, #fff0f8, #e8f7ff);
   overflow: hidden;
+  line-height: 0;
 }
 
 .post-cover img {
   width: 100%;
-  height: 100%;
+  height: auto;
   object-fit: cover;
   display: block;
 }
 
 .post-cover img.default-level-cover {
-  object-fit: contain;
-  object-position: center top;
+  object-fit: cover;
+  object-position: center;
   background: linear-gradient(135deg, #fff0f8, #e8f7ff);
 }
 
 .cover-fallback {
-  height: 100%;
-  min-height: 176px;
+  aspect-ratio: 1;
+  min-height: 0;
   display: grid;
   place-items: center;
+  line-height: 1;
   color: #23364f;
   font-size: 54px;
   font-weight: 900;
@@ -570,6 +576,7 @@ a { color: inherit; }
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 14px;
+  min-width: 0;
 }
 
 .tag {
@@ -583,6 +590,12 @@ a { color: inherit; }
   padding: 0 9px;
   font-size: 12px;
   font-weight: 800;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mini-stat {
@@ -591,6 +604,22 @@ a { color: inherit; }
   align-items: center;
   gap: 5px;
   color: var(--muted);
+  max-width: 120px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-stat svg {
+  flex: 0 0 auto;
+}
+
+.mini-stat-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .empty-state {
@@ -648,15 +677,42 @@ a { color: inherit; }
   overflow-wrap: anywhere;
 }
 
-.content img {
-  width: min(100%, 780px);
-  max-height: 520px;
-  object-fit: contain;
+.content > img {
+  width: 100%;
+  height: auto;
+  object-fit: cover;
   display: block;
-  margin: 18px auto;
+  margin: 18px 0;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: transparent;
+}
+
+.content-gallery {
+  margin: 20px 0 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  align-items: start;
+  gap: 10px;
+}
+
+.content-gallery[data-count="1"] {
+  grid-template-columns: 1fr;
+}
+
+.content-gallery-item {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+  box-shadow: 0 10px 24px rgba(53, 83, 128, .08);
+}
+
+.content-gallery-item img {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .comments {
@@ -730,6 +786,10 @@ a { color: inherit; }
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+.upload-preview-list .field-hint {
+  grid-column: 1 / -1;
 }
 
 .upload-preview-item {
@@ -999,11 +1059,15 @@ svg {
     position: static;
   }
   .post-card {
-    grid-template-columns: 1fr;
+    grid-template-columns: 180px minmax(0, 1fr);
   }
   .post-cover,
   .cover-fallback {
-    min-height: 210px;
+    min-height: 0;
+  }
+
+  .post-cover {
+    max-height: 220px;
   }
 }
 
@@ -1217,13 +1281,27 @@ svg {
   }
 
   .post-card {
-    grid-template-columns: 104px minmax(0, 1fr);
-    min-height: 138px;
+    display: block;
+    min-height: 0;
+  }
+
+  .post-card::after {
+    content: "";
+    display: block;
+    clear: both;
+  }
+
+  .post-cover {
+    float: left;
+    width: 104px;
+    max-height: 154px;
+    margin: 12px 12px 8px 12px;
+    border-radius: 8px;
   }
 
   .post-cover,
   .cover-fallback {
-    min-height: 138px;
+    min-height: 0;
   }
 
   .cover-fallback {
@@ -1263,6 +1341,10 @@ svg {
     font-size: 12px;
   }
 
+  .mini-stat {
+    max-width: 72px;
+  }
+
   .detail {
     gap: 12px;
   }
@@ -1280,6 +1362,30 @@ svg {
     margin-top: 18px;
     font-size: 15px;
     line-height: 1.75;
+  }
+
+  .content-gallery {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    margin: 16px -2px 8px;
+    padding: 0 2px 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .content-gallery::-webkit-scrollbar {
+    height: 0;
+  }
+
+  .content-gallery-item {
+    flex: 0 0 86%;
+    scroll-snap-align: start;
+  }
+
+  .content-gallery[data-count="1"] .content-gallery-item {
+    flex-basis: 100%;
   }
 
   .comments {
@@ -1780,8 +1886,8 @@ export const appScript = String.raw`
         '<h2 class="post-title"><button data-action="open-post" data-slug="' + escAttr(post.slug) + '">' + esc(post.title) + '</button></h2>' +
         '<p class="post-summary">' + esc(post.summary || excerpt(post.content)) + '</p>' +
         '<div class="tag-list">' + post.tags.map(tagButton).join("") +
-          '<span class="mini-stat">' + icon("heart") + esc(String(post.likeCount)) + '</span>' +
-          '<span class="mini-stat">' + icon("comment") + esc(String(post.commentCount)) + '</span>' +
+          '<span class="mini-stat">' + icon("heart") + '<span class="mini-stat-value">' + esc(String(post.likeCount)) + '</span></span>' +
+          '<span class="mini-stat">' + icon("comment") + '<span class="mini-stat-value">' + esc(String(post.commentCount)) + '</span></span>' +
         '</div>' +
       '</div>' +
     '</article>';
@@ -1868,10 +1974,10 @@ export const appScript = String.raw`
           '</div>' +
           '<div class="field"><label>摘要</label><input name="summary" maxlength="240"></div>' +
           '<div class="two-col">' +
-            '<div class="field"><label>封面图</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
-            '<div class="field"><label>正文图片</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div id="body-image-preview" class="upload-preview-list"></div></div>' +
+            '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
+            '<div class="field"><label>正文图片（最多 10 张）</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div id="body-image-preview" class="upload-preview-list"></div></div>' +
           '</div>' +
-          '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会追加到末尾"></textarea></div>' +
+          '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会组成图集追加到末尾"></textarea></div>' +
           '<label class="post-meta"><input name="nsfw" type="checkbox"> NSFW / 激烈表达提示</label>' +
           '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("plus") + '<span>' + (isAdmin ? '发布' : '提交审核') + '</span></button><button class="ghost-button" type="button" data-action="home">取消</button></div>' +
         '</form>' +
@@ -2635,11 +2741,12 @@ export const appScript = String.raw`
     }
     if (bodyPreview) {
       var files = selectedInputFiles(bodyInput);
+      var previewFiles = files.slice(0, 10);
       bodyPreview.innerHTML = files.length
-        ? files.map(function (file) {
+        ? previewFiles.map(function (file) {
             return '<span class="upload-preview-item"><img src="' + escAttr(previewUrl(file)) + '" alt="' + escAttr(file.name || "正文图片预览") + '"></span>';
-          }).join("")
-        : '<span class="field-hint">选择正文图片后会在这里预览，并在提交时追加到正文末尾。</span>';
+          }).join("") + (files.length > 10 ? '<span class="field-hint">正文图片最多 10 张，已先预览前 10 张。</span>' : "")
+        : '<span class="field-hint">选择正文图片后会在这里预览，并在提交时组成图集。</span>';
     }
   }
 
@@ -2685,6 +2792,9 @@ export const appScript = String.raw`
       var coverFiles = selectedInputFiles(coverInput);
       var coverFile = coverFiles[0] || null;
       var bodyImages = selectedInputFiles(bodyInput);
+      if (bodyImages.length > 10) {
+        throw new Error("正文图片最多 10 张，请少选几张后再发布");
+      }
       validateSelectedImages(coverFiles.concat(bodyImages));
       var uploadCount = (coverFile && coverFile.size ? 1 : 0) + bodyImages.length;
       if (uploadCount) toast("正在上传 " + uploadCount + " 张图片");
@@ -2696,8 +2806,9 @@ export const appScript = String.raw`
       var uploadedBodyImages = [];
       for (var i = 0; i < bodyImages.length; i += 1) {
         var uploaded = await uploadFile(bodyImages[i]);
-        uploadedBodyImages.push(uploaded);
-        content += "\n\n![" + bodyImages[i].name.replace(/[\\[\\]()]/g, "") + "](" + uploaded.url + ")\n";
+        var imageAlt = bodyImages[i].name.replace(/[\\[\\]()]/g, "");
+        uploadedBodyImages.push({ key: uploaded.key, url: uploaded.url, alt: imageAlt });
+        content += "\n\n![" + imageAlt + "](" + uploaded.url + ")\n";
       }
       var payload = {
         title: formData.get("title"),
@@ -2735,9 +2846,7 @@ export const appScript = String.raw`
         '<p class="post-summary">图片和正文已经保存。管理员通过后，封面图和正文插图会在公开页面显示。</p>' +
         '<div class="detail-meta"><span class="status-pill">待审核</span><span>' + esc(payload.title || created.slug || "") + '</span></div>' +
         (coverUrl ? '<div class="detail-cover"><img src="' + escAttr(coverUrl) + '" alt="封面预览"></div>' : '') +
-        (bodyImages.length ? '<h2 class="section-title">正文图片</h2><div class="upload-preview-list">' + bodyImages.map(function (image) {
-          return '<span class="upload-preview-item"><img src="' + escAttr(image.url) + '" alt="正文图片预览"></span>';
-        }).join("") + '</div>' : '') +
+        (bodyImages.length ? '<h2 class="section-title">正文图片</h2>' + renderContentGallery(bodyImages) : '') +
         '<div class="hero-actions"><button class="primary-button" data-action="home">' + icon("back") + '<span>回首页</span></button></div>' +
       '</section>';
   }
@@ -2943,12 +3052,31 @@ export const appScript = String.raw`
   }
 
   function renderMarkdown(text) {
-    var safe = esc(text || "");
-    safe = safe.replace(/!\[([^\]]*)\]\((\/media\/[^)]+)\)/g, function (_, alt, url) {
-      return '</p><img src="' + escAttr(url) + '" alt="' + escAttr(alt) + '"><p>';
+    var images = [];
+    var body = String(text || "").replace(/!\[([^\]]*)\]\((\/media\/[^)]+)\)/g, function (_, alt, url) {
+      if (images.length < 10) {
+        images.push({ alt: alt, url: url });
+      }
+      return "\n\n";
     });
+    var safe = esc(body);
     safe = safe.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    return '<p>' + safe.split(/\n{2,}/).map(function (part) { return part.replace(/\n/g, "<br>"); }).join("</p><p>") + '</p>';
+    var paragraphs = safe.split(/\n{2,}/).map(function (part) {
+      return part.trim();
+    }).filter(Boolean).map(function (part) {
+      return part.replace(/\n/g, "<br>");
+    });
+    return (paragraphs.length ? '<p>' + paragraphs.join("</p><p>") + '</p>' : "") + renderContentGallery(images);
+  }
+
+  function renderContentGallery(images) {
+    var cleanImages = (images || []).slice(0, 10).filter(function (image) {
+      return image && image.url;
+    });
+    if (!cleanImages.length) return "";
+    return '<div class="content-gallery" data-count="' + cleanImages.length + '">' + cleanImages.map(function (image) {
+      return '<figure class="content-gallery-item"><img src="' + escAttr(image.url) + '" alt="' + escAttr(image.alt || "正文图片") + '"></figure>';
+    }).join("") + '</div>';
   }
 
   function esc(value) {
