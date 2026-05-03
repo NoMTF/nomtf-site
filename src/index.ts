@@ -72,8 +72,28 @@ const MAX_COMMENT_BYTES = 4_000;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_MULTIPART_IMAGE_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const PASSWORD_ITERATIONS = 100_000;
+const PASSWORD_MIN_LENGTH = 10;
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const REGISTER_IP_COOLDOWN_SECONDS = 5 * 60;
 const CONTENT_WRITE_COOLDOWN_SECONDS = 30;
+const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
+const LOGIN_LOCK_SECONDS = 15 * 60;
+const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
+const LOGIN_IP_LOCK_THRESHOLD = 20;
+const WEAK_PASSWORD_PARTS = [
+  "123456",
+  "123456789",
+  "000000",
+  "111111",
+  "654321",
+  "qwerty",
+  "password",
+  "admin",
+  "administrator",
+  "iloveyou",
+  "letmein",
+  "nomtf"
+];
 const DEFAULT_UI_CONFIG: UiConfig = {
   searchPlaceholder: "搜索物品、现象、标签",
   searchWidthPx: 920,
@@ -181,9 +201,8 @@ app.post("/api/register", async (c) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return c.json({ error: "邮箱格式不对" }, 400);
   }
-  if (password.length < 8 || password.length > 128) {
-    return c.json({ error: "密码需要 8-128 个字符" }, 400);
-  }
+  const passwordError = validatePasswordStrength(password, email, username);
+  if (passwordError) return c.json({ error: passwordError }, 400);
   const registeredRecently = await requireCooldownAvailable(
     c,
     "register_success_ip",
@@ -219,6 +238,8 @@ app.post("/api/login", async (c) => {
   const body = await readJson(c);
   const email = String(body.email ?? "").trim().toLowerCase();
   const password = String(body.password ?? "");
+  const loginEmailSubject = await hashedSubject(c, "login_email", email || "empty");
+  const loginIpSubject = ipSubject(c);
   const limited = await enforceRateLimits(c, [
     {
       bucket: "login_ip",
@@ -236,15 +257,24 @@ app.post("/api/login", async (c) => {
     }
   ]);
   if (limited) return limited;
+  const loginLocked = await enforceLoginLock(c, loginEmailSubject, loginIpSubject);
+  if (loginLocked) return loginLocked;
 
   const user = await c.env.DB.prepare(
     "SELECT id, username, email, password_hash, role, status, created_at FROM users WHERE email = ?"
   ).bind(email).first<(User & { password_hash: string })>();
 
   if (!user || user.status === "banned" || !(await verifyPassword(password, user.password_hash))) {
+    await recordLoginFailure(c.env.DB, loginEmailSubject, LOGIN_EMAIL_LOCK_THRESHOLD);
+    await recordLoginFailure(c.env.DB, loginIpSubject, LOGIN_IP_LOCK_THRESHOLD);
     return c.json({ error: "邮箱或密码不正确" }, 401);
   }
 
+  await clearLoginFailures(c.env.DB, loginEmailSubject);
+  const loginAt = nowIso();
+  await c.env.DB.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?")
+    .bind(loginAt, loginAt, user.id)
+    .run();
   await createSession(c, user.id);
   const { password_hash: _, ...safeUser } = user;
   return c.json({ ok: true, user: safeUser });
@@ -257,6 +287,58 @@ app.post("/api/logout", async (c) => {
     await c.env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
   }
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
+});
+
+app.post("/api/account/password", async (c) => {
+  const user = requireActiveUser(c);
+  if (user instanceof Response) return user;
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "password_change_user",
+      subject: userSubject(user),
+      limit: 5,
+      windowSeconds: 60 * 60,
+      message: "改密码尝试太频繁了，请稍后再试"
+    },
+    {
+      bucket: "password_change_ip",
+      subject: ipSubject(c),
+      limit: 12,
+      windowSeconds: 60 * 60,
+      message: "这个网络改密码尝试太频繁了，请稍后再试"
+    }
+  ]);
+  if (limited) return limited;
+
+  const body = await readJson(c);
+  const currentPassword = String(body.currentPassword ?? "");
+  const newPassword = String(body.newPassword ?? "");
+  const row = await c.env.DB.prepare("SELECT id, username, email, password_hash FROM users WHERE id = ?")
+    .bind(user.id)
+    .first<{ id: string; username: string; email: string; password_hash: string }>();
+  if (!row || !(await verifyPassword(currentPassword, row.password_hash))) {
+    return c.json({ error: "当前密码不正确" }, 401);
+  }
+  if (await verifyPassword(newPassword, row.password_hash)) {
+    return c.json({ error: "新密码不能和旧密码一样" }, 400);
+  }
+  const passwordError = validatePasswordStrength(newPassword, row.email, row.username);
+  if (passwordError) return c.json({ error: passwordError }, 400);
+
+  const now = nowIso();
+  const newHash = await hashPassword(newPassword);
+  await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?")
+    .bind(newHash, now, now, user.id)
+    .run();
+  await deleteOtherSessions(c, user.id);
+  return c.json({ ok: true });
+});
+
+app.post("/api/account/logout-others", async (c) => {
+  const user = requireActiveUser(c);
+  if (user instanceof Response) return user;
+  await deleteOtherSessions(c, user.id);
   return c.json({ ok: true });
 });
 
@@ -718,6 +800,15 @@ app.patch("/api/admin/users/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+app.post("/api/admin/users/:id/revoke-sessions", async (c) => {
+  const admin = requireAdmin(c);
+  if (admin instanceof Response) return admin;
+  const targetId = c.req.param("id");
+  if (targetId === admin.id) return c.json({ error: "不能在这里踢掉自己的会话" }, 400);
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetId).run();
+  return c.json({ ok: true });
+});
+
 app.get("/api/admin/permissions", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
@@ -839,20 +930,42 @@ async function getUserById(db: D1Database, id: string): Promise<User | null> {
 }
 
 async function createSession(c: AppContext, userId: string) {
+  const existingToken = getCookie(c, SESSION_COOKIE);
+  if (existingToken) {
+    await c.env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?")
+      .bind(await sha256Hex(existingToken))
+      .run();
+  }
   const token = randomToken();
   const tokenHash = await sha256Hex(token);
+  const userAgentHash = await currentUserAgentHash(c);
   const now = new Date();
-  const expires = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30);
-  await c.env.DB.prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), userId, tokenHash, expires.toISOString(), now.toISOString())
+  const expires = new Date(now.getTime() + 1000 * SESSION_MAX_AGE_SECONDS);
+  await c.env.DB.prepare(`
+    INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at, ip_hash, user_agent_hash, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+    .bind(crypto.randomUUID(), userId, tokenHash, expires.toISOString(), now.toISOString(), ipSubject(c), userAgentHash, now.toISOString())
     .run();
   setCookie(c, SESSION_COOKIE, token, {
     path: "/",
     httpOnly: true,
     secure: isHttps(c),
     sameSite: "Lax",
-    maxAge: 60 * 60 * 24 * 30
+    maxAge: SESSION_MAX_AGE_SECONDS
   });
+}
+
+async function deleteOtherSessions(c: AppContext, userId: string): Promise<void> {
+  const token = getCookie(c, SESSION_COOKIE);
+  if (!token) {
+    await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId).run();
+    return;
+  }
+  const tokenHash = await sha256Hex(token);
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?")
+    .bind(userId, tokenHash)
+    .run();
 }
 
 async function resolvePermission(db: D1Database, user: User | null, visitorId: string, ipHash: string): Promise<PermissionLevel> {
@@ -987,6 +1100,54 @@ async function hashedSubject(c: AppContext, kind: string, value: string): Promis
   return `${kind}:${await sha256Hex(`${getSessionSecret(c.env)}:${kind}:${value}`)}`;
 }
 
+async function currentUserAgentHash(c: AppContext): Promise<string> {
+  const userAgent = c.req.header("User-Agent")?.slice(0, 300) ?? "";
+  return userAgent ? await hashedSubject(c, "ua", userAgent) : "";
+}
+
+async function enforceLoginLock(c: AppContext, emailSubject: string, ipSubjectText: string): Promise<Response | null> {
+  const [emailRetry, ipRetry] = await Promise.all([
+    loginLockSeconds(c.env.DB, emailSubject),
+    loginLockSeconds(c.env.DB, ipSubjectText)
+  ]);
+  const retryAfter = Math.max(emailRetry, ipRetry);
+  if (retryAfter <= 0) return null;
+  return rateLimitedResponse(c, "登录失败次数太多了，请稍后再试", retryAfter);
+}
+
+async function loginLockSeconds(db: D1Database, subject: string): Promise<number> {
+  const row = await db.prepare("SELECT locked_until FROM auth_failures WHERE subject = ?")
+    .bind(subject)
+    .first<{ locked_until: string | null }>();
+  return secondsUntil(row?.locked_until ?? "");
+}
+
+async function recordLoginFailure(db: D1Database, subject: string, threshold: number): Promise<void> {
+  const now = new Date();
+  const nowText = now.toISOString();
+  const row = await db.prepare("SELECT fail_count, first_failed_at FROM auth_failures WHERE subject = ?")
+    .bind(subject)
+    .first<{ fail_count: number; first_failed_at: string }>();
+  const firstTime = Date.parse(row?.first_failed_at ?? "");
+  const insideWindow = Number.isFinite(firstTime) && now.getTime() - firstTime <= LOGIN_FAILURE_WINDOW_SECONDS * 1000;
+  const firstFailedAt = insideWindow ? row!.first_failed_at : nowText;
+  const failCount = insideWindow ? Number(row?.fail_count ?? 0) + 1 : 1;
+  const lockedUntil = failCount >= threshold ? new Date(now.getTime() + LOGIN_LOCK_SECONDS * 1000).toISOString() : null;
+  await db.prepare(`
+    INSERT INTO auth_failures (subject, fail_count, first_failed_at, last_failed_at, locked_until)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(subject)
+    DO UPDATE SET fail_count = excluded.fail_count,
+      first_failed_at = excluded.first_failed_at,
+      last_failed_at = excluded.last_failed_at,
+      locked_until = excluded.locked_until
+  `).bind(subject, failCount, firstFailedAt, nowText, lockedUntil).run();
+}
+
+async function clearLoginFailures(db: D1Database, subject: string): Promise<void> {
+  await db.prepare("DELETE FROM auth_failures WHERE subject = ?").bind(subject).run();
+}
+
 function maybeScheduleRateLimitCleanup(c: AppContext, subject: string, windowStart: number) {
   const lastChar = subject.charCodeAt(subject.length - 1) || 0;
   if (windowStart % 600 !== 0 || lastChar % 16 !== 0) return;
@@ -1001,6 +1162,12 @@ function maybeScheduleRateLimitCleanup(c: AppContext, subject: string, windowSta
 async function cleanupExpiredRateLimitRows(db: D1Database, cutoff: string): Promise<void> {
   await db.prepare("DELETE FROM rate_limits WHERE expires_at < ?").bind(cutoff).run();
   await db.prepare("DELETE FROM rate_cooldowns WHERE expires_at < ?").bind(cutoff).run();
+  const staleFailures = new Date(Date.now() - LOGIN_FAILURE_WINDOW_SECONDS * 1000).toISOString();
+  await db.prepare(`
+    DELETE FROM auth_failures
+    WHERE (locked_until IS NULL AND first_failed_at < ?)
+      OR (locked_until IS NOT NULL AND locked_until < ?)
+  `).bind(staleFailures, cutoff).run();
 }
 
 async function readJson(c: AppContext): Promise<Record<string, unknown>> {
@@ -1168,6 +1335,63 @@ function normalizeCommentRow(row: Record<string, unknown>) {
     visitorId: String(row.visitor_id ?? ""),
     createdAt: String(row.created_at ?? "")
   };
+}
+
+function validatePasswordStrength(password: string, email: string, username: string): string | null {
+  if (password.length < PASSWORD_MIN_LENGTH || password.length > 128) {
+    return `密码需要 ${PASSWORD_MIN_LENGTH}-128 个字符`;
+  }
+  const lower = password.toLowerCase();
+  const normalizedName = username.trim().toLowerCase();
+  const emailName = email.split("@")[0]?.toLowerCase() ?? "";
+  if (normalizedName.length >= 3 && lower.includes(normalizedName)) {
+    return "密码不能包含昵称";
+  }
+  if (emailName.length >= 3 && lower.includes(emailName)) {
+    return "密码不能包含邮箱前缀";
+  }
+  if (WEAK_PASSWORD_PARTS.some((part) => lower.includes(part))) {
+    return "这个密码太常见了，请换一个更难猜的";
+  }
+  if (/(.)\1{5,}/.test(password)) {
+    return "密码不能大量重复同一个字符";
+  }
+  if (hasLongSequence(lower)) {
+    return "密码不能包含连续数字、字母或键盘顺序";
+  }
+  const classes = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password)
+  ].filter(Boolean).length;
+  if (classes < 3) {
+    return "密码至少需要包含大小写字母、数字、符号中的 3 类";
+  }
+  return null;
+}
+
+function hasLongSequence(value: string): boolean {
+  const sequences = [
+    "0123456789",
+    "9876543210",
+    "abcdefghijklmnopqrstuvwxyz",
+    "zyxwvutsrqponmlkjihgfedcba",
+    "qwertyuiop",
+    "poiuytrewq",
+    "asdfghjkl",
+    "lkjhgfdsa",
+    "zxcvbnm",
+    "mnbvcxz"
+  ];
+  return sequences.some((sequence) => containsSequence(value, sequence, 5));
+}
+
+function containsSequence(value: string, sequence: string, length: number): boolean {
+  for (let index = 0; index <= sequence.length - length; index += 1) {
+    if (value.includes(sequence.slice(index, index + length))) return true;
+  }
+  return false;
 }
 
 async function hashPassword(password: string): Promise<string> {

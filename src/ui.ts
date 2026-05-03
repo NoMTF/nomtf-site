@@ -1,4 +1,4 @@
-const ASSET_VERSION = "20260503-gallery-ui-2";
+const ASSET_VERSION = "20260503-account-security";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -1660,6 +1660,7 @@ export const appScript = String.raw`
       userBlock =
         '<button class="ghost-button" data-action="new-post" title="发帖">' + icon("plus") + '<span>发帖</span></button>' +
         (state.user.role === "admin" ? '<button class="ghost-button" data-action="admin" title="后台">' + icon("shield") + '<span>后台</span></button>' : "") +
+        '<button class="ghost-button" data-action="account" title="账号安全">' + icon("shield") + '<span>安全</span></button>' +
         '<button class="plain-button" data-action="logout" title="退出">' + icon("user") + '<span>' + esc(state.user.username) + '</span></button>';
     } else {
       userBlock = '<button class="primary-button" data-action="auth" title="登录">' + icon("user") + '<span>登录</span></button>';
@@ -2060,6 +2061,7 @@ export const appScript = String.raw`
           '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
           '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
           '<span class="admin-meta">' + dateText(u.created_at) + '</span>' +
+          '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
         '</div>';
       }).join("") + '</div></section>';
   }
@@ -2095,6 +2097,7 @@ export const appScript = String.raw`
       location.hash = "#/";
     }
     if (action === "auth") showAuth("login");
+    if (action === "account") showAccountSecurity();
     if (action === "terms") showTerms(true);
     if (action === "new-post") location.hash = "#/new";
     if (action === "admin") location.hash = "#/admin";
@@ -2142,6 +2145,7 @@ export const appScript = String.raw`
       await resetSelectedElementUi();
       return;
     }
+    if (action === "logout-others") await logoutOtherSessions();
     if (action === "logout") await logout();
     if (action === "open-post") location.hash = "#/post/" + encodeURIComponent(target.getAttribute("data-slug"));
     if (action === "filter-level") {
@@ -2175,6 +2179,7 @@ export const appScript = String.raw`
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
     if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
     if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
+    if (action === "admin-revoke-sessions") await adminRevokeSessions(target.getAttribute("data-id"));
   }
 
   function onEditorClick(event) {
@@ -2615,6 +2620,11 @@ export const appScript = String.raw`
       await register(event.target);
       return;
     }
+    if (event.target.id === "account-password-form") {
+      event.preventDefault();
+      await changePassword(event.target);
+      return;
+    }
     if (event.target.id === "compose-form") {
       event.preventDefault();
       await createPost(event.target);
@@ -2714,12 +2724,34 @@ export const appScript = String.raw`
     }
   }
 
+  async function changePassword(form) {
+    try {
+      var data = Object.fromEntries(new FormData(form));
+      if (data.newPassword !== data.confirmPassword) throw new Error("两次输入的新密码不一致");
+      await api("/api/account/password", { method: "POST", body: data });
+      form.reset();
+      toast("密码已更新，其他设备已下线");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function logoutOtherSessions() {
+    try {
+      await api("/api/account/logout-others", { method: "POST" });
+      toast("其他设备已下线");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   async function logout() {
     await api("/api/logout", { method: "POST" });
     state.user = null;
     state.admin = null;
     state.editor.enabled = false;
     state.editor.active = false;
+    closeModal();
     toast("已退出");
     location.hash = "#/";
     await route();
@@ -2947,6 +2979,16 @@ export const appScript = String.raw`
     }
   }
 
+  async function adminRevokeSessions(userId) {
+    try {
+      await api("/api/admin/users/" + userId + "/revoke-sessions", { method: "POST" });
+      toast("已让该账号下线");
+      await route();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   async function uploadFile(file) {
     var body = new FormData();
     body.set("file", file);
@@ -2955,6 +2997,30 @@ export const appScript = String.raw`
 
   function defaultLevelCover(level) {
     return siteAssets.levelCovers[Number(level)] || "";
+  }
+
+  function showAccountSecurity() {
+    if (!state.user) {
+      showAuth("login");
+      return;
+    }
+    showModal(
+      '<div class="modal">' +
+        '<div class="modal-head"><h2>账号安全</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
+        '<div class="modal-body">' +
+          '<form id="account-password-form" class="form-grid">' +
+            '<div class="field"><label>当前密码</label><input name="currentPassword" type="password" autocomplete="current-password" required></div>' +
+            '<div class="field"><label>新密码</label><input name="newPassword" type="password" minlength="10" autocomplete="new-password" required><span class="field-hint">至少 10 位，尽量混合大小写、数字和符号。</span></div>' +
+            '<div class="field"><label>确认新密码</label><input name="confirmPassword" type="password" minlength="10" autocomplete="new-password" required></div>' +
+            '<button class="primary-button" type="submit">' + icon("shield") + '<span>更新密码</span></button>' +
+          '</form>' +
+          '<div class="hero-actions">' +
+            '<button class="ghost-button" data-action="logout-others">' + icon("shield") + '<span>下线其他设备</span></button>' +
+            '<button class="plain-button" data-action="logout">' + icon("user") + '<span>退出登录</span></button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
   }
 
   function showAuth(mode) {
@@ -2977,16 +3043,16 @@ export const appScript = String.raw`
 
   function loginForm() {
     return '<form id="login-form" class="form-grid">' +
-      '<div class="field"><label>邮箱</label><input name="email" type="email" required></div>' +
-      '<div class="field"><label>密码</label><input name="password" type="password" minlength="8" required></div>' +
+      '<div class="field"><label>邮箱</label><input name="email" type="email" autocomplete="email" required></div>' +
+      '<div class="field"><label>密码</label><input name="password" type="password" minlength="8" autocomplete="current-password" required></div>' +
       '<button class="primary-button" type="submit">' + icon("user") + '<span>登录</span></button>' +
     '</form>';
   }
 
   function registerForm() {
     return '<form id="register-form" class="form-grid">' +
-      '<div class="two-col"><div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required></div><div class="field"><label>邮箱</label><input name="email" type="email" required></div></div>' +
-      '<div class="field"><label>密码</label><input name="password" type="password" minlength="8" required></div>' +
+      '<div class="two-col"><div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required></div><div class="field"><label>邮箱</label><input name="email" type="email" autocomplete="email" required></div></div>' +
+      '<div class="field"><label>密码</label><input name="password" type="password" minlength="10" autocomplete="new-password" required><span class="field-hint">至少 10 位，包含大小写字母、数字、符号中的 3 类。</span></div>' +
       '<div class="field"><label>管理员邀请码</label><input name="inviteCode" placeholder="普通用户可留空"></div>' +
       '<button class="primary-button" type="submit">' + icon("plus") + '<span>注册</span></button>' +
     '</form>';
