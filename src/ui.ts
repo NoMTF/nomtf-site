@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260504-search-admin-edit";
+export const ASSET_VERSION = "20260504-search-results-mobile";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
@@ -122,6 +122,12 @@ export const styles = String.raw`
 }
 
 * { box-sizing: border-box; }
+
+img,
+video,
+canvas {
+  max-width: 100%;
+}
 
 html {
   min-width: 320px;
@@ -363,6 +369,7 @@ a { color: inherit; }
 .ghost-button,
 .danger-button,
 .plain-button {
+  min-width: 0;
   min-height: 38px;
   border-radius: 8px;
   border: 1px solid transparent;
@@ -423,6 +430,7 @@ a { color: inherit; }
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 30px 0 56px;
+  min-width: 0;
 }
 
 .hero {
@@ -753,6 +761,36 @@ a { color: inherit; }
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.search-results {
+  display: grid;
+  gap: 14px;
+}
+
+.search-results-head {
+  padding: clamp(18px, 3vw, 28px);
+}
+
+.search-results-head h1 {
+  margin: 0;
+  font-size: clamp(26px, 4vw, 42px);
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+}
+
+.search-results-head p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.search-result-query {
+  color: var(--blue-strong);
+}
+
+.search-results-feed {
+  display: grid;
+  gap: 14px;
 }
 
 .segment.active {
@@ -1822,8 +1860,8 @@ svg {
   }
 
   .hot-posts {
-    margin-bottom: 14px;
-    padding: 12px;
+    margin-bottom: 12px;
+    padding: 10px;
   }
 
   .hot-posts-head {
@@ -1839,6 +1877,13 @@ svg {
   .hot-post-stats {
     grid-column: 2;
     gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .filter-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
   .filters {
@@ -1864,6 +1909,11 @@ svg {
     font-size: 13px;
   }
 
+  .filter-actions {
+    justify-content: space-between;
+    align-items: center;
+  }
+
   .filters .ghost-button,
   .filters .plain-button {
     min-width: 0;
@@ -1872,6 +1922,41 @@ svg {
 
   .feed {
     gap: 12px;
+  }
+
+  .search-results {
+    gap: 10px;
+  }
+
+  .search-results-head {
+    padding: 12px;
+  }
+
+  .search-results-head h1 {
+    font-size: 23px;
+    line-height: 1.15;
+  }
+
+  .search-results-head p {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .search-results-head .hero-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .search-results-feed {
+    gap: 10px;
+  }
+
+  .empty-state {
+    padding: 24px 14px;
+    font-size: 14px;
+    line-height: 1.7;
   }
 
   .post-card {
@@ -2404,10 +2489,27 @@ export const appScript = String.raw`
     document.body.classList.toggle("editor-selecting", state.editor.enabled && state.editor.active);
     renderHeader();
     if (hash === "#/about" || hash === "#/talk") {
+      state.filters.q = "";
       state.filters.category = hash === "#/about" ? "about" : "talk";
       state.filters.level = "";
       await loadPosts();
       renderHome();
+      syncEditorChrome();
+      return;
+    }
+    if (hash.indexOf("#/search") === 0) {
+      var searchQuery = searchQueryFromHash(hash);
+      state.filters.q = searchQuery;
+      state.filters.level = "";
+      state.filters.tag = "";
+      state.filters.category = "rating";
+      if (!searchQuery) {
+        location.hash = "#/";
+        return;
+      }
+      renderHeader();
+      await loadPosts();
+      renderSearchResults();
       syncEditorChrome();
       return;
     }
@@ -2429,7 +2531,10 @@ export const appScript = String.raw`
       syncEditorChrome();
       return;
     }
-    if (hash === "#/") state.filters.category = state.filters.category || "rating";
+    if (hash === "#/") {
+      state.filters.q = "";
+      state.filters.category = state.filters.category || "rating";
+    }
     await loadPosts();
     renderHome();
     syncEditorChrome();
@@ -2531,8 +2636,29 @@ export const appScript = String.raw`
     state.filters.q = query;
     saveSearchHistory(query);
     closeSearchPanel();
-    location.hash = "#/";
-    await route();
+    navigateToSearch(query);
+  }
+
+  function navigateToSearch(query) {
+    query = String(query || "").trim().replace(/\s+/g, " ");
+    if (!query) {
+      state.filters.q = "";
+      location.hash = "#/";
+      return;
+    }
+    var nextHash = "#/search?q=" + encodeURIComponent(query);
+    if (location.hash === nextHash) {
+      route();
+    } else {
+      location.hash = nextHash;
+    }
+  }
+
+  function searchQueryFromHash(hash) {
+    var raw = String(hash || "").replace(/^#\/search\??/, "");
+    if (!raw) return "";
+    var params = new URLSearchParams(raw);
+    return String(params.get("q") || "").trim().replace(/\s+/g, " ");
   }
 
   function loadSearchHistory() {
@@ -2635,6 +2761,31 @@ export const appScript = String.raw`
         renderFilters() +
         '<div class="feed">' + renderFeed() + '</div>' +
       '</section>';
+  }
+
+  function renderSearchResults() {
+    var app = document.getElementById("app");
+    var query = String(state.filters.q || "").trim();
+    var count = state.posts.length;
+    app.innerHTML =
+      '<section class="search-results">' +
+        '<div class="panel search-results-head">' +
+          '<h1>搜索结果：<span class="search-result-query">' + esc(query) + '</span></h1>' +
+          '<p>找到 ' + esc(String(count)) + ' 篇相关帖子。结果会按标题、摘要、正文、标签和热度综合排序。</p>' +
+          '<div class="hero-actions">' +
+            '<button class="ghost-button" data-action="clear-search">' + icon("back") + '<span>返回首页</span></button>' +
+            '<button class="plain-button" data-action="new-post">' + icon("plus") + '<span>发布内容</span></button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="search-results-feed">' + renderSearchFeed(query) + '</div>' +
+      '</section>';
+  }
+
+  function renderSearchFeed(query) {
+    if (!state.posts.length) {
+      return '<div class="panel empty-state">没有找到和“' + esc(query) + '”相关的帖子。可以换个关键词，或直接发布一篇。</div>';
+    }
+    return state.posts.map(postCard).join("");
   }
 
   function homeIntro(category) {
@@ -3133,8 +3284,10 @@ export const appScript = String.raw`
       return;
     }
     if (action === "home") {
+      state.filters.q = "";
       state.filters.category = "rating";
       state.filters.level = "";
+      state.filters.tag = "";
       location.hash = "#/";
     }
     if (action === "search-suggestion") {
@@ -3206,13 +3359,23 @@ export const appScript = String.raw`
       await route();
     }
     if (action === "tag") {
+      state.filters.q = "";
       state.filters.tag = target.getAttribute("data-tag") || "";
+      location.hash = "#/";
+      await route();
+    }
+    if (action === "clear-search") {
+      state.filters.q = "";
       location.hash = "#/";
       await route();
     }
     if (action === "clear-filters") {
       state.filters = { q: "", level: "", tag: "", category: state.filters.category || "rating" };
-      await route();
+      if ((location.hash || "").indexOf("#/search") === 0) {
+        location.hash = "#/";
+      } else {
+        await route();
+      }
     }
     if (action === "like") await likePost(target.getAttribute("data-id"));
     if (action === "close-modal") {
@@ -3888,8 +4051,7 @@ export const appScript = String.raw`
       state.filters.q = new FormData(event.target).get("q").trim();
       if (state.filters.q) saveSearchHistory(state.filters.q);
       closeSearchPanel();
-      location.hash = "#/";
-      await route();
+      navigateToSearch(state.filters.q);
       return;
     }
     if (event.target.id === "login-form") {
