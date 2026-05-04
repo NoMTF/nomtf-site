@@ -1374,6 +1374,11 @@ a { color: inherit; }
   background: rgba(255, 241, 248, .72);
 }
 
+.admin-ip-line .ip-detail {
+  color: #6f7889;
+  line-height: 1.45;
+}
+
 .admin-ip-cell span,
 .admin-subline {
   color: var(--muted);
@@ -2897,6 +2902,7 @@ export const appScript = String.raw`
       return '<div class="admin-ip-line ' + (item.country === "CN" ? "is-cn" : "") + '">' +
         '<code>' + esc(item.label || item.ip || "未记录") + '</code>' +
         '<span>' + (index === 0 ? '优先显示 · ' : '') + (item.lastSeenAt ? '最近 ' + dateText(item.lastSeenAt) : '时间未知') + (item.seenCount ? ' · ' + esc(String(item.seenCount)) + ' 次' : '') + '</span>' +
+        (item.detail ? '<span class="ip-detail">' + esc(item.detail) + '</span>' : '') +
       '</div>';
     }).join("");
   }
@@ -4109,7 +4115,7 @@ export const appScript = String.raw`
           '<form id="admin-user-edit-form" class="form-grid" data-id="' + escAttr(user.id) + '">' +
             '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required value="' + escAttr(user.username || "") + '"></div>' +
             '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
-            '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">Ban IP 会封禁该用户全部已记录 IP 指纹；中国 IP 会优先显示。</span></div>' +
+            '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">Ban IP 会封禁该用户全部已记录 IP 指纹；仅中国大陆 IP 会优先显示，香港不按中国大陆 IP 处理。</span></div>' +
             '<div class="two-col">' +
               '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>' +
               '<div class="field"><label>状态</label><select name="status"><option value="active" ' + selected(user.status, "active") + '>active</option><option value="muted" ' + selected(user.status, "muted") + '>muted</option><option value="banned" ' + selected(user.status, "banned") + '>banned</option></select></div>' +

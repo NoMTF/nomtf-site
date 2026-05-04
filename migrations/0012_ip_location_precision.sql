@@ -1,0 +1,9 @@
+ALTER TABLE user_ip_events ADD COLUMN continent TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN region_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN postal_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN metro_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN timezone TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN latitude TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN longitude TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN asn TEXT NOT NULL DEFAULT '';
+ALTER TABLE user_ip_events ADD COLUMN as_organization TEXT NOT NULL DEFAULT '';

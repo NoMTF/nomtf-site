@@ -57,8 +57,17 @@ type Variables = {
 
 type IpLocation = {
   country: string;
+  continent: string;
   region: string;
+  regionCode: string;
   city: string;
+  postalCode: string;
+  metroCode: string;
+  timezone: string;
+  latitude: string;
+  longitude: string;
+  asn: string;
+  asOrganization: string;
   colo: string;
 };
 
@@ -1625,25 +1634,59 @@ function clientIpFromRequest(c: AppContext): string {
 
 function ipLocationFromRequest(c: AppContext, ip: string): IpLocation {
   const cf = c.req.raw.cf as Record<string, unknown> | undefined;
-  const country = String(cf?.country ?? c.req.header("CF-IPCountry") ?? "").toUpperCase();
+  const country = cleanText(cf?.country ?? c.req.header("CF-IPCountry") ?? "", 8).toUpperCase();
   const region = cleanText(cf?.region, 80);
+  const regionCode = cleanText(cf?.regionCode, 24);
   const city = cleanText(cf?.city, 80);
+  const postalCode = cleanText(cf?.postalCode, 32);
+  const metroCode = cleanText(cf?.metroCode, 32);
+  const timezone = cleanText(cf?.timezone, 80);
+  const latitude = cleanText(cf?.latitude, 32);
+  const longitude = cleanText(cf?.longitude, 32);
+  const continent = cleanText(cf?.continent, 8).toUpperCase();
+  const asn = cleanText(cf?.asn, 32);
+  const asOrganization = cleanText(cf?.asOrganization, 120);
   const colo = cleanText(cf?.colo, 20);
   const fallback = fallbackIpLocation(ip);
   return {
     country: country || fallback.country,
+    continent: continent || fallback.continent,
     region: region || fallback.region,
+    regionCode: regionCode || fallback.regionCode,
     city: city || fallback.city,
+    postalCode: postalCode || fallback.postalCode,
+    metroCode: metroCode || fallback.metroCode,
+    timezone: timezone || fallback.timezone,
+    latitude: latitude || fallback.latitude,
+    longitude: longitude || fallback.longitude,
+    asn: asn || fallback.asn,
+    asOrganization: asOrganization || fallback.asOrganization,
     colo: colo || fallback.colo
   };
 }
 
 function fallbackIpLocation(ip: string): IpLocation {
-  if (/^147\.79\.59\./.test(ip)) return { country: "JP", region: "Tokyo", city: "Tokyo", colo: "" };
-  if (/^(14|27|36|39|42|49|58|59|60|61|101|103|106|110|111|112|113|114|115|116|117|118|119|120|121|122|123|124|125|139|140|150|171|175|180|182|183|202|203|210|211|218|219|220|221|222|223)\./.test(ip)) return { country: "CN", region: "", city: "", colo: "" };
-  if (/^(133|153|182|183|202|203|210|211)\./.test(ip)) return { country: "JP", region: "", city: "", colo: "" };
-  if (/^(3|4|8|12|13|15|16|17|18|20|23|24|32|34|35|38|40|44|47|52|54|63|64|65|66|67|68|69|70|71|72|73|74|75|76|96|97|98|99|100|104|107|108|128|129|130|131|132|134|135|136|137|138|142|143|144|146|147|148|149|152|155|156|157|158|159|160|161|162|163|164|165|166|167|168|169|170|172|173|174|184|192|198|199|204|205|206|207|208|209|216)\./.test(ip)) return { country: "US", region: "", city: "", colo: "" };
-  return { country: "", region: "", city: "", colo: "" };
+  if (/^147\.79\.59\./.test(ip)) return emptyIpLocation({ country: "JP", region: "Tokyo", city: "Tokyo" });
+  return emptyIpLocation();
+}
+
+function emptyIpLocation(overrides: Partial<IpLocation> = {}): IpLocation {
+  return {
+    country: "",
+    continent: "",
+    region: "",
+    regionCode: "",
+    city: "",
+    postalCode: "",
+    metroCode: "",
+    timezone: "",
+    latitude: "",
+    longitude: "",
+    asn: "",
+    asOrganization: "",
+    colo: "",
+    ...overrides
+  };
 }
 
 function formatIpLocation(country: string, region: string, city: string, colo: string): string {
@@ -1657,9 +1700,9 @@ function formatIpLocation(country: string, region: string, city: string, colo: s
 function countryNameZh(country: string): string {
   const map: Record<string, string> = {
     CN: "中国",
-    HK: "中国香港",
-    MO: "中国澳门",
-    TW: "中国台湾",
+    HK: "香港",
+    MO: "澳门",
+    TW: "台湾",
     JP: "日本",
     US: "美国",
     SG: "新加坡",
@@ -1824,7 +1867,7 @@ async function attachUserIpPreviews(db: D1Database, users: Record<string, unknow
   if (!ids.length) return users;
   const placeholders = ids.map(() => "?").join(",");
   const result = await db.prepare(`
-    SELECT user_id, ip_hash, ip, country, region, city, colo, first_seen_at, last_seen_at, seen_count
+    SELECT user_id, ip_hash, ip, country, continent, region, region_code, city, postal_code, metro_code, timezone, latitude, longitude, asn, as_organization, colo, first_seen_at, last_seen_at, seen_count
     FROM user_ip_events
     WHERE user_id IN (${placeholders})
     ORDER BY CASE WHEN country = 'CN' THEN 0 ELSE 1 END, last_seen_at DESC
@@ -1860,21 +1903,67 @@ async function attachUserIpPreviews(db: D1Database, users: Record<string, unknow
 function ipPreviewFromRow(row: Record<string, unknown>) {
   const ip = String(row.ip ?? "");
   const country = String(row.country ?? "").toUpperCase();
+  const continent = String(row.continent ?? "").toUpperCase();
   const region = String(row.region ?? "");
+  const regionCode = String(row.region_code ?? row.regionCode ?? "");
   const city = String(row.city ?? "");
+  const postalCode = String(row.postal_code ?? row.postalCode ?? "");
+  const metroCode = String(row.metro_code ?? row.metroCode ?? "");
+  const timezone = String(row.timezone ?? "");
+  const latitude = String(row.latitude ?? "");
+  const longitude = String(row.longitude ?? "");
+  const asn = String(row.asn ?? "");
+  const asOrganization = String(row.as_organization ?? row.asOrganization ?? "");
+  const colo = String(row.colo ?? "");
   const location = formatIpLocation(country, region, city, String(row.colo ?? ""));
+  const details = buildIpPrecisionDetails({
+    continent,
+    regionCode,
+    postalCode,
+    metroCode,
+    timezone,
+    latitude,
+    longitude,
+    asn,
+    asOrganization,
+    colo
+  });
   return {
     ip,
     ipHash: String(row.ip_hash ?? ""),
     country,
+    continent,
     region,
+    regionCode,
     city,
+    postalCode,
+    metroCode,
+    timezone,
+    latitude,
+    longitude,
+    asn,
+    asOrganization,
+    colo,
     location,
     label: location ? `${ip}（${location}）` : ip || "未记录",
+    detail: details.join(" · "),
     lastSeenAt: String(row.last_seen_at ?? ""),
     firstSeenAt: String(row.first_seen_at ?? ""),
     seenCount: Number(row.seen_count ?? 1)
   };
+}
+
+function buildIpPrecisionDetails(location: Pick<IpLocation, "continent" | "regionCode" | "postalCode" | "metroCode" | "timezone" | "latitude" | "longitude" | "asn" | "asOrganization" | "colo">): string[] {
+  const details: string[] = [];
+  if (location.postalCode) details.push(`邮编 ${location.postalCode}`);
+  if (location.latitude && location.longitude) details.push(`坐标 ${location.latitude}, ${location.longitude}`);
+  if (location.timezone) details.push(`时区 ${location.timezone}`);
+  if (location.regionCode) details.push(`地区码 ${location.regionCode}`);
+  if (location.metroCode) details.push(`都会区 ${location.metroCode}`);
+  if (location.asn || location.asOrganization) details.push(`ASN ${[location.asn, location.asOrganization].filter(Boolean).join(" ")}`);
+  if (location.continent) details.push(`洲 ${location.continent}`);
+  if (location.colo) details.push(`CF ${location.colo}`);
+  return details;
 }
 
 function compareIpPreview(a: { country: string; lastSeenAt: string }, b: { country: string; lastSeenAt: string }): number {
@@ -1902,14 +1991,25 @@ async function recordUserIpEvent(c: AppContext, userId: string, timestamp = nowI
   if (!ipHash) return;
   const location = c.get("ipLocation");
   await c.env.DB.prepare(`
-    INSERT INTO user_ip_events (user_id, ip_hash, ip, country, region, city, colo, first_seen_at, last_seen_at, seen_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    INSERT INTO user_ip_events (
+      user_id, ip_hash, ip, country, continent, region, region_code, city, postal_code, metro_code, timezone, latitude, longitude, asn, as_organization, colo, first_seen_at, last_seen_at, seen_count
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     ON CONFLICT(user_id, ip_hash)
     DO UPDATE SET
       ip = excluded.ip,
       country = CASE WHEN excluded.country != '' THEN excluded.country ELSE user_ip_events.country END,
+      continent = CASE WHEN excluded.continent != '' THEN excluded.continent ELSE user_ip_events.continent END,
       region = CASE WHEN excluded.region != '' THEN excluded.region ELSE user_ip_events.region END,
+      region_code = CASE WHEN excluded.region_code != '' THEN excluded.region_code ELSE user_ip_events.region_code END,
       city = CASE WHEN excluded.city != '' THEN excluded.city ELSE user_ip_events.city END,
+      postal_code = CASE WHEN excluded.postal_code != '' THEN excluded.postal_code ELSE user_ip_events.postal_code END,
+      metro_code = CASE WHEN excluded.metro_code != '' THEN excluded.metro_code ELSE user_ip_events.metro_code END,
+      timezone = CASE WHEN excluded.timezone != '' THEN excluded.timezone ELSE user_ip_events.timezone END,
+      latitude = CASE WHEN excluded.latitude != '' THEN excluded.latitude ELSE user_ip_events.latitude END,
+      longitude = CASE WHEN excluded.longitude != '' THEN excluded.longitude ELSE user_ip_events.longitude END,
+      asn = CASE WHEN excluded.asn != '' THEN excluded.asn ELSE user_ip_events.asn END,
+      as_organization = CASE WHEN excluded.as_organization != '' THEN excluded.as_organization ELSE user_ip_events.as_organization END,
       colo = CASE WHEN excluded.colo != '' THEN excluded.colo ELSE user_ip_events.colo END,
       last_seen_at = excluded.last_seen_at,
       seen_count = user_ip_events.seen_count + 1
@@ -1918,8 +2018,17 @@ async function recordUserIpEvent(c: AppContext, userId: string, timestamp = nowI
     ipHash,
     c.get("ipAddress"),
     location.country,
+    location.continent,
     location.region,
+    location.regionCode,
     location.city,
+    location.postalCode,
+    location.metroCode,
+    location.timezone,
+    location.latitude,
+    location.longitude,
+    location.asn,
+    location.asOrganization,
     location.colo,
     timestamp,
     timestamp
