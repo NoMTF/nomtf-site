@@ -2,6 +2,7 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "nomtf",
   "main": "src/index.ts",
+  "workers_dev": true,
   "compatibility_date": "2026-04-28",
   "compatibility_flags": [
     "nodejs_compat"
