@@ -71,6 +71,17 @@ type IpLocation = {
   colo: string;
 };
 
+type BrowserLocationInput = {
+  latitude: string;
+  longitude: string;
+  accuracy: string;
+  altitude: string;
+  altitudeAccuracy: string;
+  heading: string;
+  speed: string;
+  recordedAt: string;
+};
+
 type RateLimitRule = {
   bucket: string;
   subject: string;
@@ -505,6 +516,47 @@ app.post("/api/logout", async (c) => {
     await c.env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
   }
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
+});
+
+app.post("/api/account/location", async (c) => {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "需要先登录" }, 401);
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "precise_location_user",
+      subject: userSubject(user),
+      limit: 24,
+      windowSeconds: 60 * 60,
+      message: "位置更新太频繁了，请稍后再试"
+    },
+    {
+      bucket: "precise_location_ip",
+      subject: ipSubject(c),
+      limit: 80,
+      windowSeconds: 60 * 60,
+      message: "这个网络位置更新太频繁了，请稍后再试"
+    }
+  ]);
+  if (limited) return limited;
+
+  const body = await readJson(c);
+  const latitude = cleanCoordinate(body.latitude, -90, 90);
+  const longitude = cleanCoordinate(body.longitude, -180, 180);
+  const accuracy = cleanNonNegativeNumber(body.accuracy, 1000000);
+  if (!latitude || !longitude) return c.json({ error: "定位坐标无效" }, 400);
+
+  await recordUserIpEvent(c, user.id);
+  await recordBrowserLocation(c, user.id, {
+    latitude,
+    longitude,
+    accuracy,
+    altitude: cleanOptionalNumber(body.altitude, -12000, 100000),
+    altitudeAccuracy: cleanNonNegativeNumber(body.altitudeAccuracy, 1000000),
+    heading: cleanOptionalNumber(body.heading, 0, 360),
+    speed: cleanNonNegativeNumber(body.speed, 10000),
+    recordedAt: cleanBrowserLocationTimestamp(body.timestamp)
+  });
   return c.json({ ok: true });
 });
 
@@ -1867,7 +1919,7 @@ async function attachUserIpPreviews(db: D1Database, users: Record<string, unknow
   if (!ids.length) return users;
   const placeholders = ids.map(() => "?").join(",");
   const result = await db.prepare(`
-    SELECT user_id, ip_hash, ip, country, continent, region, region_code, city, postal_code, metro_code, timezone, latitude, longitude, asn, as_organization, colo, first_seen_at, last_seen_at, seen_count
+    SELECT user_id, ip_hash, ip, country, continent, region, region_code, city, postal_code, metro_code, timezone, latitude, longitude, asn, as_organization, colo, browser_latitude, browser_longitude, browser_accuracy, browser_altitude, browser_altitude_accuracy, browser_heading, browser_speed, browser_recorded_at, first_seen_at, last_seen_at, seen_count
     FROM user_ip_events
     WHERE user_id IN (${placeholders})
     ORDER BY CASE WHEN country = 'CN' THEN 0 ELSE 1 END, last_seen_at DESC
@@ -1915,6 +1967,14 @@ function ipPreviewFromRow(row: Record<string, unknown>) {
   const asn = String(row.asn ?? "");
   const asOrganization = String(row.as_organization ?? row.asOrganization ?? "");
   const colo = String(row.colo ?? "");
+  const browserLatitude = String(row.browser_latitude ?? row.browserLatitude ?? "");
+  const browserLongitude = String(row.browser_longitude ?? row.browserLongitude ?? "");
+  const browserAccuracy = String(row.browser_accuracy ?? row.browserAccuracy ?? "");
+  const browserAltitude = String(row.browser_altitude ?? row.browserAltitude ?? "");
+  const browserAltitudeAccuracy = String(row.browser_altitude_accuracy ?? row.browserAltitudeAccuracy ?? "");
+  const browserHeading = String(row.browser_heading ?? row.browserHeading ?? "");
+  const browserSpeed = String(row.browser_speed ?? row.browserSpeed ?? "");
+  const browserRecordedAt = String(row.browser_recorded_at ?? row.browserRecordedAt ?? "");
   const location = formatIpLocation(country, region, city, String(row.colo ?? ""));
   const details = buildIpPrecisionDetails({
     continent,
@@ -1926,7 +1986,15 @@ function ipPreviewFromRow(row: Record<string, unknown>) {
     longitude,
     asn,
     asOrganization,
-    colo
+    colo,
+    browserLatitude,
+    browserLongitude,
+    browserAccuracy,
+    browserAltitude,
+    browserAltitudeAccuracy,
+    browserHeading,
+    browserSpeed,
+    browserRecordedAt
   });
   return {
     ip,
@@ -1944,6 +2012,15 @@ function ipPreviewFromRow(row: Record<string, unknown>) {
     asn,
     asOrganization,
     colo,
+    browserLatitude,
+    browserLongitude,
+    browserAccuracy,
+    browserAltitude,
+    browserAltitudeAccuracy,
+    browserHeading,
+    browserSpeed,
+    browserRecordedAt,
+    hasPreciseLocation: Boolean(browserLatitude && browserLongitude),
     location,
     label: location ? `${ip}（${location}）` : ip || "未记录",
     detail: details.join(" · "),
@@ -1953,8 +2030,25 @@ function ipPreviewFromRow(row: Record<string, unknown>) {
   };
 }
 
-function buildIpPrecisionDetails(location: Pick<IpLocation, "continent" | "regionCode" | "postalCode" | "metroCode" | "timezone" | "latitude" | "longitude" | "asn" | "asOrganization" | "colo">): string[] {
+function buildIpPrecisionDetails(location: Pick<IpLocation, "continent" | "regionCode" | "postalCode" | "metroCode" | "timezone" | "latitude" | "longitude" | "asn" | "asOrganization" | "colo"> & {
+  browserLatitude: string;
+  browserLongitude: string;
+  browserAccuracy: string;
+  browserAltitude: string;
+  browserAltitudeAccuracy: string;
+  browserHeading: string;
+  browserSpeed: string;
+  browserRecordedAt: string;
+}): string[] {
   const details: string[] = [];
+  if (location.browserLatitude && location.browserLongitude) {
+    const accuracy = location.browserAccuracy ? ` ±${location.browserAccuracy}m` : "";
+    details.push(`浏览器定位 ${location.browserLatitude}, ${location.browserLongitude}${accuracy}`);
+  }
+  if (location.browserAltitude) details.push(`海拔 ${location.browserAltitude}m${location.browserAltitudeAccuracy ? ` ±${location.browserAltitudeAccuracy}m` : ""}`);
+  if (location.browserHeading) details.push(`朝向 ${location.browserHeading}°`);
+  if (location.browserSpeed) details.push(`速度 ${location.browserSpeed}m/s`);
+  if (location.browserRecordedAt) details.push(`授权定位 ${location.browserRecordedAt}`);
   if (location.postalCode) details.push(`邮编 ${location.postalCode}`);
   if (location.latitude && location.longitude) details.push(`坐标 ${location.latitude}, ${location.longitude}`);
   if (location.timezone) details.push(`时区 ${location.timezone}`);
@@ -1966,9 +2060,11 @@ function buildIpPrecisionDetails(location: Pick<IpLocation, "continent" | "regio
   return details;
 }
 
-function compareIpPreview(a: { country: string; lastSeenAt: string }, b: { country: string; lastSeenAt: string }): number {
+function compareIpPreview(a: { country: string; lastSeenAt: string; hasPreciseLocation?: boolean }, b: { country: string; lastSeenAt: string; hasPreciseLocation?: boolean }): number {
   const china = (a.country === "CN" ? 0 : 1) - (b.country === "CN" ? 0 : 1);
   if (china !== 0) return china;
+  const precise = (b.hasPreciseLocation ? 1 : 0) - (a.hasPreciseLocation ? 1 : 0);
+  if (precise !== 0) return precise;
   return b.lastSeenAt.localeCompare(a.lastSeenAt);
 }
 
@@ -2032,6 +2128,37 @@ async function recordUserIpEvent(c: AppContext, userId: string, timestamp = nowI
     location.colo,
     timestamp,
     timestamp
+  ).run();
+}
+
+async function recordBrowserLocation(c: AppContext, userId: string, location: BrowserLocationInput): Promise<void> {
+  const ipHash = c.get("ipHash");
+  if (!ipHash) return;
+  await c.env.DB.prepare(`
+    UPDATE user_ip_events
+    SET
+      browser_latitude = ?,
+      browser_longitude = ?,
+      browser_accuracy = ?,
+      browser_altitude = ?,
+      browser_altitude_accuracy = ?,
+      browser_heading = ?,
+      browser_speed = ?,
+      browser_recorded_at = ?,
+      last_seen_at = ?
+    WHERE user_id = ? AND ip_hash = ?
+  `).bind(
+    location.latitude,
+    location.longitude,
+    location.accuracy,
+    location.altitude,
+    location.altitudeAccuracy,
+    location.heading,
+    location.speed,
+    location.recordedAt,
+    nowIso(),
+    userId,
+    ipHash
   ).run();
 }
 
@@ -3474,6 +3601,33 @@ function cleanName(value: unknown): string {
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function cleanCoordinate(value: unknown, min: number, max: number): string {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < min || number > max) return "";
+  return number.toFixed(6);
+}
+
+function cleanOptionalNumber(value: unknown, min: number, max: number): string {
+  if (value === null || value === undefined || value === "") return "";
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < min || number > max) return "";
+  return String(Math.round(number * 100) / 100);
+}
+
+function cleanNonNegativeNumber(value: unknown, max: number): string {
+  return cleanOptionalNumber(value, 0, max);
+}
+
+function cleanBrowserLocationTimestamp(value: unknown): string {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return nowIso();
+  const date = new Date(number);
+  if (Number.isNaN(date.getTime())) return nowIso();
+  const now = Date.now();
+  if (date.getTime() > now + 5 * 60 * 1000) return nowIso();
+  return date.toISOString();
 }
 
 function cleanFinalRating(value: unknown): string {

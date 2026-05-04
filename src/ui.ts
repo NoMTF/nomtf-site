@@ -1374,6 +1374,11 @@ a { color: inherit; }
   background: rgba(255, 241, 248, .72);
 }
 
+.admin-ip-line.is-precise {
+  border-color: rgba(48, 160, 190, .34);
+  background: rgba(235, 250, 255, .86);
+}
+
 .admin-ip-line .ip-detail {
   color: #6f7889;
   line-height: 1.45;
@@ -2166,6 +2171,7 @@ export const appScript = String.raw`
       5: "/media/site/level-5.png?v=20260503-media"
     }
   };
+  var preciseLocationBusy = false;
 
   document.addEventListener("DOMContentLoaded", init);
   window.addEventListener("hashchange", route);
@@ -2190,6 +2196,7 @@ export const appScript = String.raw`
       state.termsVersion = me.termsVersion || state.termsVersion;
       var settings = await api("/api/site-settings");
       applyUiConfig(settings.ui);
+      schedulePreciseLocation("init", false);
     } catch (error) {
       toast(error.message);
     }
@@ -2899,7 +2906,10 @@ export const appScript = String.raw`
     if (!ips.length && user.last_ip) ips = [{ label: user.last_ip, lastSeenAt: user.last_seen_at, seenCount: 1, country: "" }];
     if (!ips.length) return '<div class="admin-ip-line"><code>未记录</code><span>等待用户下次访问</span></div>';
     return ips.map(function (item, index) {
-      return '<div class="admin-ip-line ' + (item.country === "CN" ? "is-cn" : "") + '">' +
+      var classes = ["admin-ip-line"];
+      if (item.country === "CN") classes.push("is-cn");
+      if (item.hasPreciseLocation) classes.push("is-precise");
+      return '<div class="' + classes.join(" ") + '">' +
         '<code>' + esc(item.label || item.ip || "未记录") + '</code>' +
         '<span>' + (index === 0 ? '优先显示 · ' : '') + (item.lastSeenAt ? '最近 ' + dateText(item.lastSeenAt) : '时间未知') + (item.seenCount ? ' · ' + esc(String(item.seenCount)) + ' 次' : '') + '</span>' +
         (item.detail ? '<span class="ip-detail">' + esc(item.detail) + '</span>' : '') +
@@ -3687,6 +3697,7 @@ export const appScript = String.raw`
       state.user = data.user;
       closeModal();
       toast("已登录");
+      schedulePreciseLocation("login", true);
       await route();
     } catch (error) {
       toast(error.message);
@@ -3699,10 +3710,59 @@ export const appScript = String.raw`
       state.user = data.user;
       closeModal();
       toast("注册成功");
+      schedulePreciseLocation("register", true);
       await route();
     } catch (error) {
       toast(error.message);
     }
+  }
+
+  function schedulePreciseLocation(reason, force) {
+    if (!state.user || !navigator.geolocation || preciseLocationBusy) return;
+    var userId = state.user.id || state.user.email || "current";
+    var key = "nomtf_geo_next_" + userId;
+    var now = Date.now();
+    var next = Number(localStorage.getItem(key) || 0);
+    if (!force && next > now) return;
+    localStorage.setItem(key, String(now + 6 * 60 * 60 * 1000));
+    window.setTimeout(function () {
+      requestPreciseLocation(reason, key);
+    }, force ? 300 : 1200);
+  }
+
+  function requestPreciseLocation(reason, key) {
+    if (!state.user || !navigator.geolocation || preciseLocationBusy) return;
+    preciseLocationBusy = true;
+    toast("正在请求浏览器位置授权");
+    navigator.geolocation.getCurrentPosition(function (position) {
+      var coords = position.coords || {};
+      api("/api/account/location", {
+        method: "POST",
+        body: {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          accuracy: coords.accuracy,
+          altitude: coords.altitude,
+          altitudeAccuracy: coords.altitudeAccuracy,
+          heading: coords.heading,
+          speed: coords.speed,
+          timestamp: position.timestamp,
+          reason: reason
+        }
+      }).then(function () {
+        localStorage.setItem(key, String(Date.now() + 6 * 60 * 60 * 1000));
+      }).catch(function () {
+      }).finally(function () {
+        preciseLocationBusy = false;
+      });
+    }, function () {
+      localStorage.setItem(key, String(Date.now() + 24 * 60 * 60 * 1000));
+      preciseLocationBusy = false;
+    }, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000
+    });
   }
 
   async function changePassword(form) {
@@ -4115,7 +4175,7 @@ export const appScript = String.raw`
           '<form id="admin-user-edit-form" class="form-grid" data-id="' + escAttr(user.id) + '">' +
             '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required value="' + escAttr(user.username || "") + '"></div>' +
             '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
-            '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">Ban IP 会封禁该用户全部已记录 IP 指纹；仅中国大陆 IP 会优先显示，香港不按中国大陆 IP 处理。</span></div>' +
+            '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">允许定位时显示浏览器精确坐标；拒绝时显示 Cloudflare IP 城市。Ban IP 会封禁该用户全部已记录 IP 指纹；仅中国大陆 IP 会优先显示，香港不按中国大陆 IP 处理。</span></div>' +
             '<div class="two-col">' +
               '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>' +
               '<div class="field"><label>状态</label><select name="status"><option value="active" ' + selected(user.status, "active") + '>active</option><option value="muted" ' + selected(user.status, "muted") + '>muted</option><option value="banned" ' + selected(user.status, "banned") + '>banned</option></select></div>' +
