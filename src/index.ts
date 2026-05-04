@@ -8,7 +8,7 @@ type UserStatus = "active" | "muted" | "banned";
 type PermissionLevel = "allow" | "muted" | "banned";
 type PostStatus = "draft" | "pending" | "published" | "hidden" | "rejected" | "deleted";
 type PostCategory = "rating" | "about" | "talk";
-type TelegramStep = "category" | "title" | "finalRating" | "hazardLevel" | "ratingReason" | "twitterRef" | "tags" | "summary" | "nsfw" | "cover" | "bodyImages" | "content" | "confirm";
+type TelegramStep = "category" | "submitterName" | "title" | "finalRating" | "hazardLevel" | "ratingReason" | "twitterRef" | "tags" | "summary" | "nsfw" | "cover" | "bodyImages" | "content" | "confirm";
 
 type User = {
   id: string;
@@ -74,6 +74,7 @@ type SubmissionInput = {
   nsfw: boolean;
   requestedSlug: string;
   coverKey: string | null;
+  submitterName: string;
   tags: string[];
 };
 
@@ -87,6 +88,7 @@ type CreatedSubmission = {
 type TelegramDraft = Partial<{
   category: Exclude<PostCategory, "about">;
   title: string;
+  submitterName: string;
   finalRating: string;
   hazardLevel: number;
   ratingReason: string;
@@ -531,7 +533,7 @@ app.get("/api/posts", async (c) => {
     SELECT
       p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
-      u.username AS author_name,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
       EXISTS(SELECT 1 FROM post_likes mine WHERE mine.post_id = p.id AND mine.subject_type = ? AND mine.subject_id = ?) AS liked_by_me,
@@ -572,7 +574,7 @@ app.get("/api/posts/hot", async (c) => {
     SELECT
       p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
-      u.username AS author_name,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
       EXISTS(SELECT 1 FROM post_likes mine WHERE mine.post_id = p.id AND mine.subject_type = ? AND mine.subject_id = ?) AS liked_by_me,
@@ -610,7 +612,7 @@ app.get("/api/posts/:slug", async (c) => {
   const row = await c.env.DB.prepare(`
     SELECT
       p.*,
-      u.username AS author_name,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
       EXISTS(SELECT 1 FROM post_likes mine WHERE mine.post_id = p.id AND mine.subject_type = ? AND mine.subject_id = ?) AS liked_by_me,
@@ -775,6 +777,7 @@ app.post("/api/submissions", async (c) => {
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
   const coverKey = optionalR2Key(body.coverKey ?? body.cover_key);
+  const submitterName = cleanName(body.submitterName ?? body.submitter_name).slice(0, 40);
   const tags = cleanTags(body.tags);
   if (category === "about") return c.json({ error: "关于页只能由管理员在后台发布" }, 403);
   if (!title || title.length < 2) return c.json({ error: "标题太短了" }, 400);
@@ -804,6 +807,7 @@ app.post("/api/submissions", async (c) => {
     nsfw,
     requestedSlug,
     coverKey,
+    submitterName,
     tags
   });
   if (!created) return c.json({ error: "没有可用的管理员作者账号" }, 500);
@@ -1009,7 +1013,7 @@ app.get("/api/admin/posts", async (c) => {
     SELECT
       p.id, p.title, p.slug, p.summary, p.category, p.pinned_at, p.hazard_level, p.nsfw, p.status, COALESCE(p.view_count, 0) AS view_count,
       p.created_at, p.updated_at, p.reviewed_at,
-      u.username AS author_name,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       reviewer.username AS reviewed_by_name
     FROM posts p
     JOIN users u ON u.id = p.author_id
@@ -1076,7 +1080,7 @@ app.get("/api/admin/export/markdown", async (c) => {
     SELECT
       p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.hazard_level, p.nsfw, p.cover_key, p.status, p.view_count, p.pinned_at, p.created_at, p.updated_at,
-      u.username AS author_name,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags
     FROM posts p
     JOIN users u ON u.id = p.author_id
@@ -1101,7 +1105,7 @@ app.get("/api/admin/posts/:id", async (c) => {
   const row = await c.env.DB.prepare(`
     SELECT
       p.*,
-      u.username AS author_name,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
       0 AS liked_by_me,
@@ -1991,8 +1995,8 @@ async function createExternalSubmission(db: D1Database, input: SubmissionInput):
   const slug = await uniqueSlug(db, input.requestedSlug || input.title);
   const status: PostStatus = input.category === "talk" ? "published" : "pending";
   await db.prepare(`
-    INSERT INTO posts (id, title, slug, summary, content, final_rating, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO posts (id, title, slug, summary, content, final_rating, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, submitter_name, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       id,
@@ -2007,6 +2011,7 @@ async function createExternalSubmission(db: D1Database, input: SubmissionInput):
       input.hazardLevel,
       input.nsfw ? 1 : 0,
       input.coverKey,
+      input.submitterName,
       status,
       authorId,
       now,
@@ -2108,8 +2113,8 @@ async function handleTelegramCallback(env: Env, callback: TelegramCallbackQuery)
   }
   if (data.startsWith("tg:cat:")) {
     const category = data.endsWith(":talk") ? "talk" : "rating";
-    await saveTelegramSession(env.DB, chatId, "title", { category });
-    await sendTelegramMessage(env, chatId, `已选择：${categoryTextForTelegram(category)}\n\n第一步：请发送标题（2-120 字）。`, cancelKeyboard());
+    await saveTelegramSession(env.DB, chatId, "submitterName", { category });
+    await sendTelegramMessage(env, chatId, `已选择：${categoryTextForTelegram(category)}\n\n请先发送投稿者署名（2-40 字，会显示在网站作者位置；可以填“匿名”）。`, cancelKeyboard());
     return;
   }
 
@@ -2161,6 +2166,7 @@ async function handleTelegramCallback(env: Env, callback: TelegramCallbackQuery)
     return;
   }
   if (data === "tg:confirm") {
+    await sendTelegramMessage(env, chatId, "收到确认，正在提交到 NoMTF...");
     await finalizeTelegramSubmission(env, chatId, draft);
   }
 }
@@ -2199,15 +2205,35 @@ async function handleTelegramMessage(env: Env, message: TelegramMessage): Promis
     return;
   }
   if (session.step === "bodyImages" && message.photo?.length) {
-    const keys = session.draft.bodyImageKeys ?? [];
-    if (keys.length >= MAX_TELEGRAM_BODY_IMAGES) {
+    const added = await addTelegramBodyPhoto(env, session.draft, message.photo, chatId);
+    if (!added) {
       await sendTelegramMessage(env, chatId, "正文图片已经满 10 张了，请点“图片完成”进入正文。", bodyImagesKeyboard(session.draft));
       return;
     }
-    const uploaded = await uploadTelegramPhoto(env, message.photo, chatId);
-    session.draft.bodyImageKeys = keys.concat(uploaded.key);
+    if (text.length >= 10) {
+      session.draft.content = cleanText(text, MAX_POST_BYTES);
+      await saveTelegramSession(env.DB, chatId, "confirm", session.draft);
+      await sendTelegramMessage(env, chatId, "图文正文已收到。\n\n" + telegramDraftPreview(session.draft), confirmKeyboard());
+      return;
+    }
     await saveTelegramSession(env.DB, chatId, "bodyImages", session.draft);
-    await sendTelegramMessage(env, chatId, `已收到第 ${session.draft.bodyImageKeys.length} 张正文图片。还可以继续发，或点“图片完成”。`, bodyImagesKeyboard(session.draft));
+    await sendTelegramMessage(env, chatId, `已收到第 ${(session.draft.bodyImageKeys ?? []).length} 张正文图片。还可以继续发，或点“图片完成”。`, bodyImagesKeyboard(session.draft));
+    return;
+  }
+  if (session.step === "content" && message.photo?.length) {
+    const added = await addTelegramBodyPhoto(env, session.draft, message.photo, chatId);
+    if (!added) {
+      await sendTelegramMessage(env, chatId, "正文图片已经满 10 张了。请只发送正文文字。", cancelKeyboard());
+      return;
+    }
+    if (text.length < 10) {
+      await saveTelegramSession(env.DB, chatId, "content", session.draft);
+      await sendTelegramMessage(env, chatId, "图片已收到。请再发送正文文字，或重新发送一张带正文说明的图片（caption 至少 10 字）。", cancelKeyboard());
+      return;
+    }
+    session.draft.content = cleanText(text, MAX_POST_BYTES);
+    await saveTelegramSession(env.DB, chatId, "confirm", session.draft);
+    await sendTelegramMessage(env, chatId, "图文正文已收到。\n\n" + telegramDraftPreview(session.draft), confirmKeyboard());
     return;
   }
 
@@ -2231,6 +2257,18 @@ async function handleTelegramTextStep(env: Env, chatId: string, session: Telegra
     else if (next === "nsfw") await askTelegramNsfw(env, chatId);
     else if (next === "bodyImages") await sendTelegramMessage(env, chatId, "现在可以连续发送正文图片，最多 10 张。发完点“图片完成”，也可以跳过。", bodyImagesKeyboard(draft));
     else await sendTelegramMessage(env, chatId, "最后一步：请发送正文文字（至少 10 字）。", cancelKeyboard());
+    return;
+  }
+
+  if (session.step === "submitterName") {
+    const submitterName = cleanName(text).slice(0, 40);
+    if (submitterName.length < 2) {
+      await sendTelegramMessage(env, chatId, "署名太短了，请发送 2-40 字；想匿名就发“匿名”。", cancelKeyboard());
+      return;
+    }
+    draft.submitterName = submitterName;
+    await saveTelegramSession(env.DB, chatId, "title", draft);
+    await sendTelegramMessage(env, chatId, "署名已记录。现在请发送标题（2-120 字）。", cancelKeyboard());
     return;
   }
 
@@ -2347,6 +2385,7 @@ function telegramDraftToSubmissionInput(draft: TelegramDraft): SubmissionInput {
   const bodyImageKeys = cleanR2Keys(draft.bodyImageKeys ?? []);
   const content = cleanText(appendImageKeysToContent(draft.content ?? "", bodyImageKeys), MAX_POST_BYTES);
   const title = cleanText(draft.title, 120);
+  const submitterName = cleanName(draft.submitterName).slice(0, 40) || "匿名投稿者";
   if (title.length < 2) throw new Error("标题太短");
   if (content.length < 10) throw new Error("正文至少 10 个字符");
 
@@ -2371,6 +2410,7 @@ function telegramDraftToSubmissionInput(draft: TelegramDraft): SubmissionInput {
     nsfw: Boolean(draft.nsfw),
     requestedSlug: "",
     coverKey: optionalR2Key(draft.coverKey),
+    submitterName,
     tags: cleanTags(draft.tags ?? "")
   };
 }
@@ -2412,6 +2452,14 @@ async function askTelegramNsfw(env: Env, chatId: string): Promise<void> {
       [{ text: "取消", callback_data: "tg:cancel" }]
     ]
   });
+}
+
+async function addTelegramBodyPhoto(env: Env, draft: TelegramDraft, photos: TelegramPhotoSize[], chatId: string): Promise<boolean> {
+  const keys = draft.bodyImageKeys ?? [];
+  if (keys.length >= MAX_TELEGRAM_BODY_IMAGES) return false;
+  const uploaded = await uploadTelegramPhoto(env, photos, chatId);
+  draft.bodyImageKeys = keys.concat(uploaded.key);
+  return true;
 }
 
 async function uploadTelegramPhoto(env: Env, photos: TelegramPhotoSize[], chatId: string) {
@@ -2460,7 +2508,7 @@ async function deleteTelegramSession(db: D1Database, chatId: string): Promise<vo
 
 function cleanTelegramStep(value: unknown): TelegramStep {
   const step = String(value ?? "");
-  return ["category", "title", "finalRating", "hazardLevel", "ratingReason", "twitterRef", "tags", "summary", "nsfw", "cover", "bodyImages", "content", "confirm"].includes(step)
+  return ["category", "submitterName", "title", "finalRating", "hazardLevel", "ratingReason", "twitterRef", "tags", "summary", "nsfw", "cover", "bodyImages", "content", "confirm"].includes(step)
     ? step as TelegramStep
     : "category";
 }
@@ -2470,6 +2518,7 @@ function telegramDraftPreview(draft: TelegramDraft): string {
   const lines = [
     "请确认投稿：",
     `分类：${categoryTextForTelegram(category)}`,
+    `署名：${draft.submitterName || "匿名投稿者"}`,
     `标题：${draft.title ?? ""}`,
     `标签：${draft.tags || "无"}`,
     `摘要：${draft.summary || "无"}`,

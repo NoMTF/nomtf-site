@@ -62,6 +62,7 @@ Authorization: Bearer <SUBMISSION_API_KEY>
   "twitterRef": "仅 rating 分类必填：推特链接、@用户名或占位符，最多 160 字",
   "hazardLevel": "仅 rating 分类必填：1-5",
   "category": "rating",
+  "submitterName": "投稿者署名，可选，最多 40 字",
   "tags": "标签1, 标签2",
   "slug": "optional-custom-slug",
   "coverKey": "上传图片返回的 key，可选，仅 1 张封面",
@@ -105,4 +106,4 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
-Webhook 需要带 Telegram 的 `secret_token`，机器人会引导用户逐步投稿，支持封面图和最多 10 张正文图片。投稿成功后会额外发送通知；30 秒投稿冷却未结束时会提示剩余秒数。
+Webhook 需要带 Telegram 的 `secret_token`，机器人会引导用户逐步投稿，支持投稿者署名、封面图和最多 10 张正文图片。正文图片可以带 caption，caption 会直接作为正文进入确认。投稿成功后会额外发送通知；30 秒投稿冷却未结束时会提示剩余秒数。
