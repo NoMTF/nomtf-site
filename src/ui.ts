@@ -1,4 +1,6 @@
-const ASSET_VERSION = "20260504-final-rating";
+export const ASSET_VERSION = "20260504-search-admin-edit";
+export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
+export const SITE_ORIGIN = "https://nomtf.com";
 
 export function renderPage(): string {
   return `<!doctype html>
@@ -7,7 +9,23 @@ export function renderPage(): string {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>NoMTF 不药娘网</title>
-    <meta name="description" content="NoMTF 是一个娱乐向评级社区，用 1-5 级给物品和现象做荒诞评级。">
+    <meta name="description" content="${SITE_DESCRIPTION}">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="${SITE_ORIGIN}/">
+    <link rel="icon" type="image/png" sizes="48x48" href="/media/site/search-icon-48.png?v=${ASSET_VERSION}">
+    <link rel="icon" type="image/png" sizes="96x96" href="/media/site/search-icon-96.png?v=${ASSET_VERSION}">
+    <link rel="apple-touch-icon" sizes="180x180" href="/media/site/search-icon-180.png?v=${ASSET_VERSION}">
+    <link rel="manifest" href="/site.webmanifest?v=${ASSET_VERSION}">
+    <meta property="og:site_name" content="NoMTF 不药娘网">
+    <meta property="og:title" content="NoMTF 不药娘网">
+    <meta property="og:description" content="${SITE_DESCRIPTION}">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="${SITE_ORIGIN}/">
+    <meta property="og:image" content="${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="NoMTF 不药娘网">
+    <meta name="twitter:description" content="${SITE_DESCRIPTION}">
+    <meta name="twitter:image" content="${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}">
     <link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}">
     <script src="/assets/app.js?v=${ASSET_VERSION}" defer></script>
   </head>
@@ -2661,8 +2679,8 @@ export const appScript = String.raw`
             '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" data-rating-required' + ratingRequiredAttrs + ' placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
           '</div>' +
           '<div class="two-col">' +
-            '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview">选择后在这里预览</div></div>' +
-            '<div class="field"><label>正文图片（最多 10 张）</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div id="body-image-preview" class="upload-preview-list"></div></div>' +
+            '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div id="cover-preview" class="upload-preview" data-upload-preview="cover">选择后在这里预览</div></div>' +
+            '<div class="field"><label>正文图片（最多 10 张）</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div id="body-image-preview" class="upload-preview-list" data-upload-preview="body"></div></div>' +
           '</div>' +
           '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会组成图集追加到末尾"></textarea></div>' +
           '<label class="post-meta"><input name="nsfw" type="checkbox"> NSFW / 激烈表达提示</label>' +
@@ -3550,8 +3568,8 @@ export const appScript = String.raw`
       syncPostCategoryFields(postForm);
       return;
     }
-    if (target.closest && target.closest("#compose-form") && (target.name === "cover" || target.name === "bodyImages")) {
-      updateUploadPreviews();
+    if (postForm && (target.name === "cover" || target.name === "bodyImages")) {
+      updateUploadPreviews(postForm);
       return;
     }
     if (target.closest && target.closest("#ui-element-form") && target.name === "imageFile") {
@@ -3642,28 +3660,30 @@ export const appScript = String.raw`
     });
   }
 
-  function updateUploadPreviews() {
-    var form = document.getElementById("compose-form");
+  function updateUploadPreviews(form) {
+    form = form || document.getElementById("compose-form") || document.getElementById("admin-post-edit-form");
     if (!form) return;
     clearUploadPreviewUrls();
-    var coverPreview = document.getElementById("cover-preview");
-    var bodyPreview = document.getElementById("body-image-preview");
+    var coverPreview = form.querySelector('[data-upload-preview="cover"]') || document.getElementById("cover-preview");
+    var bodyPreview = form.querySelector('[data-upload-preview="body"]') || document.getElementById("body-image-preview");
     var coverInput = form.querySelector('input[name="cover"]');
     var bodyInput = form.querySelector('input[name="bodyImages"]');
     var coverFile = selectedInputFiles(coverInput)[0];
     if (coverPreview) {
+      var currentCoverUrl = coverPreview.getAttribute("data-current-cover-url") || "";
       coverPreview.innerHTML = coverFile
         ? '<img src="' + escAttr(previewUrl(coverFile)) + '" alt="' + escAttr(coverFile.name || "封面预览") + '">'
-        : '选择后在这里预览';
+        : (currentCoverUrl ? '<img src="' + escAttr(currentCoverUrl) + '" alt="当前封面">' : '选择后在这里预览');
     }
     if (bodyPreview) {
       var files = selectedInputFiles(bodyInput);
       var previewFiles = files.slice(0, 10);
+      var emptyHint = bodyPreview.getAttribute("data-empty-hint") || "选择正文图片后会在这里预览，并在提交时组成图集。";
       bodyPreview.innerHTML = files.length
         ? previewFiles.map(function (file) {
             return '<span class="upload-preview-item"><img src="' + escAttr(previewUrl(file)) + '" alt="' + escAttr(file.name || "正文图片预览") + '"></span>';
           }).join("") + (files.length > 10 ? '<span class="field-hint">正文图片最多 10 张，已先预览前 10 张。</span>' : "")
-        : '<span class="field-hint">选择正文图片后会在这里预览，并在提交时组成图集。</span>';
+        : '<span class="field-hint">' + esc(emptyHint) + '</span>';
     }
   }
 
@@ -3946,6 +3966,9 @@ export const appScript = String.raw`
       var ratingHiddenClass = postRating ? "" : " hidden";
       var ratingRequiredAttrs = postRating ? " required" : " disabled";
       var ratingDisabledAttr = postRating ? "" : " disabled";
+      var coverPreview = post.coverUrl
+        ? '<img src="' + escAttr(post.coverUrl) + '" alt="当前封面">'
+        : '选择后在这里预览';
       showModal(
         '<div class="modal large">' +
           '<div class="modal-head"><h2>编辑帖子</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
@@ -3953,14 +3976,16 @@ export const appScript = String.raw`
             '<form id="admin-post-edit-form" class="form-grid' + (postRating ? "" : " nonrating-post-form") + '" data-id="' + escAttr(post.id) + '">' +
               '<div class="two-col">' +
                 '<div class="field"><label>标题</label><input name="title" maxlength="120" required value="' + escAttr(post.title) + '"></div>' +
-                '<div class="field"><label>slug</label><input name="slug" readonly value="' + escAttr(post.slug) + '"><span class="field-hint">slug 暂不直接改，避免旧链接失效。</span></div>' +
+                '<div class="field"><label>自定义 slug</label><input name="slug" maxlength="90" value="' + escAttr(post.slug) + '"><span class="field-hint">管理员可修改；改动后旧链接会变化。</span></div>' +
+              '</div>' +
+              '<div class="two-col">' +
+                '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(post.category || "rating", "rating") + '>评级页</option><option value="talk" ' + selected(post.category || "rating", "talk") + '>杂谈页</option><option value="about" ' + selected(post.category || "rating", "about") + '>关于页</option></select></div>' +
+                '<div class="field"><label>状态</label><select name="status">' + ["pending","published","hidden","rejected","draft"].map(function (status) { return '<option value="' + status + '" ' + selected(post.status, status) + '>' + statusText(status) + '</option>'; }).join("") + '</select></div>' +
               '</div>' +
               '<div class="two-col category-tag-row">' +
                 '<div class="field' + ratingHiddenClass + '" data-rating-only><label>危害等级</label><select name="hazardLevel" data-rating-required' + ratingDisabledAttr + '>' + [1,2,3,4,5].map(function (level) { return '<option value="' + level + '" ' + selected(String(post.hazardLevel), String(level)) + '>' + level + '</option>'; }).join("") + '</select></div>' +
-                '<div class="field"><label>状态</label><select name="status">' + ["pending","published","hidden","rejected","draft"].map(function (status) { return '<option value="' + status + '" ' + selected(post.status, status) + '>' + statusText(status) + '</option>'; }).join("") + '</select></div>' +
+                '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '" placeholder="逗号分隔"></div>' +
               '</div>' +
-              '<div class="field"><label>分类</label><select name="category"><option value="rating" ' + selected(post.category || "rating", "rating") + '>评级页</option><option value="talk" ' + selected(post.category || "rating", "talk") + '>杂谈页</option><option value="about" ' + selected(post.category || "rating", "about") + '>关于页</option></select></div>' +
-              '<div class="field"><label>标签</label><input name="tags" maxlength="160" value="' + escAttr((post.tags || []).join(", ")) + '"></div>' +
               '<div class="field"><label>摘要</label><input name="summary" maxlength="240" value="' + escAttr(post.summary || "") + '"></div>' +
               '<div class="field' + ratingHiddenClass + '" data-rating-only><label>最终评级（必填）</label><input name="finalRating" maxlength="3" pattern="[1-5][+-]?" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.finalRating || "") + '" placeholder="例如 1- / 1 / 1+"></div>' +
               '<div class="two-col' + ratingHiddenClass + '" data-rating-only>' +
@@ -3968,8 +3993,11 @@ export const appScript = String.raw`
                 '<div class="field"><label>推特链接 / 用户名（必填）</label><input name="twitterRef" maxlength="160" data-rating-required' + ratingRequiredAttrs + ' value="' + escAttr(post.twitterRef || "") + '" placeholder="https://x.com/WenYuTang1019 / @WenYuTang1019 / 占位符"></div>' +
               '</div>' +
               '<div class="field"><label>封面 key</label><input name="coverKey" value="' + escAttr(post.coverKey || "") + '"><span class="field-hint">可直接粘贴 R2 key，也可以下面重新上传封面。</span></div>' +
-              '<div class="field"><label>重新上传封面</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"></div>' +
-              '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required>' + esc(post.content || "") + '</textarea></div>' +
+              '<div class="two-col">' +
+                '<div class="field"><label>封面图（仅 1 张）</label><input name="cover" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><div class="upload-preview" data-upload-preview="cover" data-current-cover-url="' + escAttr(post.coverUrl || "") + '">' + coverPreview + '</div></div>' +
+                '<div class="field"><label>正文图片（最多 10 张）</label><input name="bodyImages" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple><div class="upload-preview-list" data-upload-preview="body" data-empty-hint="选择正文图片后会追加到正文末尾。"><span class="field-hint">选择正文图片后会追加到正文末尾。</span></div></div>' +
+              '</div>' +
+              '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会组成图集追加到末尾">' + esc(post.content || "") + '</textarea></div>' +
               '<label class="post-meta"><input name="nsfw" type="checkbox" ' + (post.nsfw ? "checked" : "") + '> NSFW / 激烈表达提示</label>' +
               '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存帖子</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
             '</form>' +
@@ -4008,20 +4036,42 @@ export const appScript = String.raw`
   }
 
   async function saveAdminPost(form) {
+    var submitButton = form.querySelector('button[type="submit"]');
+    var submitText = submitButton && submitButton.querySelector("span");
+    var oldSubmitText = submitText ? submitText.textContent : "";
     try {
+      if (submitButton) submitButton.disabled = true;
+      if (submitText) submitText.textContent = "上传中";
       var formData = new FormData(form);
-      var coverFile = formData.get("cover");
+      var coverInput = form.querySelector('input[name="cover"]');
+      var bodyInput = form.querySelector('input[name="bodyImages"]');
+      var coverFiles = selectedInputFiles(coverInput);
+      var coverFile = coverFiles[0] || null;
+      var bodyImages = selectedInputFiles(bodyInput);
+      if (bodyImages.length > 10) {
+        throw new Error("正文图片最多 10 张，请少选几张后再保存");
+      }
+      validateSelectedImages(coverFiles.concat(bodyImages));
+      var uploadCount = (coverFile && coverFile.size ? 1 : 0) + bodyImages.length;
+      if (uploadCount) toast("正在上传 " + uploadCount + " 张图片");
       var coverKey = String(formData.get("coverKey") || "").trim();
-      if (coverFile && coverFile.name) {
+      if (coverFile && coverFile.size) {
         var uploaded = await uploadFile(coverFile);
         coverKey = uploaded.key;
+      }
+      var content = String(formData.get("content") || "");
+      for (var i = 0; i < bodyImages.length; i += 1) {
+        var bodyImage = await uploadFile(bodyImages[i]);
+        var imageAlt = bodyImages[i].name.replace(/[\\[\\]()]/g, "");
+        content += "\n\n![" + imageAlt + "](" + bodyImage.url + ")\n";
       }
       var category = String(formData.get("category") || "rating");
       var payload = {
         title: formData.get("title"),
+        slug: formData.get("slug"),
         summary: formData.get("summary"),
         category: category,
-        content: formData.get("content"),
+        content: content,
         status: formData.get("status"),
         tags: formData.get("tags"),
         coverKey: coverKey,
@@ -4038,12 +4088,16 @@ export const appScript = String.raw`
         body: payload
       });
       closeModal();
-      toast("帖子已保存");
+      clearUploadPreviewUrls();
+      toast(uploadCount ? "帖子和图片已保存" : "帖子已保存");
       await loadAdmin();
       renderAdmin();
       syncEditorChrome();
     } catch (error) {
       toast(error.message);
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+      if (submitText) submitText.textContent = oldSubmitText;
     }
   }
 

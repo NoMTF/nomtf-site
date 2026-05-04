@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { appScript, renderBlockedPage, renderPage, styles } from "./ui";
+import { ASSET_VERSION, SITE_DESCRIPTION, appScript, renderBlockedPage, renderPage, styles } from "./ui";
 
 type Role = "user" | "admin";
 type UserStatus = "active" | "muted" | "banned";
@@ -154,26 +154,40 @@ app.get("/assets/app.js", (c) => {
   });
 });
 
+app.get("/favicon.ico", async (c) => {
+  return serveMediaObject(c, "site/search-icon-48.png", "image/png");
+});
+
+app.get("/site.webmanifest", (c) => {
+  const manifest = {
+    name: "NoMTF 不药娘网",
+    short_name: "NoMTF",
+    description: SITE_DESCRIPTION,
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#f8fbff",
+    theme_color: "#69cbed",
+    icons: [
+      { src: `/media/site/search-icon-192.png?v=${ASSET_VERSION}`, sizes: "192x192", type: "image/png" },
+      { src: `/media/site/search-icon-512.png?v=${ASSET_VERSION}`, sizes: "512x512", type: "image/png" }
+    ]
+  };
+  return new Response(JSON.stringify(manifest), {
+    headers: {
+      "Content-Type": "application/manifest+json; charset=utf-8",
+      "Cache-Control": "public, max-age=3600"
+    }
+  });
+});
+
 app.get("/media/*", async (c) => {
   const key = c.req.path.replace(/^\/media\//, "");
   if (!key || key.includes("..")) {
     return new Response("Not found", { status: 404 });
   }
 
-  const object = await c.env.MEDIA.get(key);
-  if (!object?.body) {
-    return new Response("Not found", { status: 404 });
-  }
-
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("etag", object.httpEtag);
-  headers.set("Cache-Control", "public, max-age=31536000, immutable");
-  if (!headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/octet-stream");
-  }
-
-  return new Response(object.body, { headers });
+  return serveMediaObject(c, key);
 });
 
 app.get("/api/me", async (c) => {
@@ -680,9 +694,9 @@ app.post("/api/submissions", async (c) => {
 app.patch("/api/posts/:id", async (c) => {
   const user = requireActiveUser(c);
   if (user instanceof Response) return user;
-  const post = await c.env.DB.prepare("SELECT id, author_id FROM posts WHERE id = ? AND status != 'deleted'")
+  const post = await c.env.DB.prepare("SELECT id, author_id, slug FROM posts WHERE id = ? AND status != 'deleted'")
     .bind(c.req.param("id"))
-    .first<{ id: string; author_id: string }>();
+    .first<{ id: string; author_id: string; slug: string }>();
   if (!post) return c.json({ error: "帖子不存在" }, 404);
   if (post.author_id !== user.id && user.role !== "admin") return c.json({ error: "没有权限" }, 403);
 
@@ -697,6 +711,7 @@ app.patch("/api/posts/:id", async (c) => {
   const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
   const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
   const nsfw = Boolean(body.nsfw);
+  const requestedSlug = user.role === "admin" ? cleanText(body.slug, 90) : "";
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
   if (category === "about" && user.role !== "admin") {
@@ -722,13 +737,17 @@ app.patch("/api/posts/:id", async (c) => {
     return c.json({ error: "最终等级必填，格式只能是 1-、1、1+ 到 5-、5、5+" }, 400);
   }
 
+  const nextSlug = user.role === "admin" && requestedSlug
+    ? await uniqueSlug(c.env.DB, requestedSlug, post.id)
+    : post.slug;
+
   await c.env.DB.prepare(`
     UPDATE posts
-    SET title = ?, summary = ?, content = ?, final_rating = ?, rating_reason = ?, twitter_ref = ?, category = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
+    SET title = ?, slug = ?, summary = ?, content = ?, final_rating = ?, rating_reason = ?, twitter_ref = ?, category = ?, hazard_level = ?, nsfw = ?, cover_key = ?, status = ?, updated_at = ?
     WHERE id = ?
-  `).bind(title, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
+  `).bind(title, nextSlug, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
   await syncTags(c.env.DB, post.id, tags);
-  return c.json({ ok: true, status });
+  return c.json({ ok: true, status, slug: nextSlug });
 });
 
 app.post("/api/posts/:id/like", async (c) => {
@@ -1260,6 +1279,26 @@ async function applySecurityHeaders(c: AppContext, next: Next) {
   if (isHttps(c)) {
     c.res.headers.set("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
   }
+}
+
+async function serveMediaObject(c: AppContext, key: string, fallbackContentType = "application/octet-stream"): Promise<Response> {
+  if (!key || key.includes("..")) {
+    return new Response("Not found", { status: 404 });
+  }
+  const object = await c.env.MEDIA.get(key);
+  if (!object?.body) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", fallbackContentType);
+  }
+
+  return new Response(object.body, { headers });
 }
 
 async function bindRequestContext(c: AppContext, next: Next) {
@@ -1801,11 +1840,13 @@ async function syncTags(db: D1Database, postId: string, tags: string[]) {
   }
 }
 
-async function uniqueSlug(db: D1Database, source: string): Promise<string> {
+async function uniqueSlug(db: D1Database, source: string, excludePostId = ""): Promise<string> {
   const base = slugify(source) || crypto.randomUUID().slice(0, 8);
   for (let i = 0; i < 80; i += 1) {
     const slug = i === 0 ? base : `${base}-${i + 1}`;
-    const found = await db.prepare("SELECT id FROM posts WHERE slug = ?").bind(slug).first();
+    const found = excludePostId
+      ? await db.prepare("SELECT id FROM posts WHERE slug = ? AND id != ?").bind(slug, excludePostId).first()
+      : await db.prepare("SELECT id FROM posts WHERE slug = ?").bind(slug).first();
     if (!found) return slug;
   }
   return `${base}-${crypto.randomUUID().slice(0, 8)}`;
