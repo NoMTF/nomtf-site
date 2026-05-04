@@ -906,6 +906,101 @@ a { color: inherit; }
   background: linear-gradient(135deg, #fff0f8, #e8f7ff);
 }
 
+.zoomable-image {
+  cursor: zoom-in;
+  touch-action: manipulation;
+}
+
+.image-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: clamp(12px, 3vw, 28px);
+  background: rgba(14, 20, 32, .9);
+  backdrop-filter: blur(12px);
+}
+
+.image-viewer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+  font-weight: 800;
+}
+
+.image-viewer-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-viewer-button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(255,255,255,.12);
+  cursor: pointer;
+}
+
+.image-viewer-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.image-viewer-stage {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.image-viewer-stage img {
+  max-width: min(100%, 1400px);
+  max-height: calc(100dvh - 118px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 30px 90px rgba(0,0,0,.38);
+}
+
+.image-viewer-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.image-viewer-nav.prev {
+  left: clamp(4px, 2vw, 18px);
+}
+
+.image-viewer-nav.next {
+  right: clamp(4px, 2vw, 18px);
+}
+
+.image-viewer-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: .9;
+}
+
+html.image-viewer-open,
+html.image-viewer-open body {
+  overflow: hidden;
+}
+
 .detail-article {
   padding: clamp(20px, 4vw, 42px);
 }
@@ -1849,6 +1944,30 @@ svg {
     background: linear-gradient(135deg, #fff0f8, #e8f7ff);
   }
 
+  .image-viewer-backdrop {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .image-viewer-toolbar {
+    min-height: 44px;
+  }
+
+  .image-viewer-caption {
+    font-size: 13px;
+  }
+
+  .image-viewer-stage img {
+    max-height: calc(100dvh - 78px);
+    border-radius: 6px;
+  }
+
+  .image-viewer-nav {
+    width: 38px;
+    height: 38px;
+    background: rgba(0,0,0,.32);
+  }
+
   .detail-article {
     padding: 12px 4px;
   }
@@ -2137,6 +2256,14 @@ export const appScript = String.raw`
       trendsLoaded: false,
       loadingTrends: false
     },
+    imageViewer: {
+      images: [],
+      index: 0,
+      lastTapAt: 0,
+      lastTapTarget: null,
+      lastTapX: 0,
+      lastTapY: 0
+    },
     uploadPreviewUrls: [],
     ui: {
       searchPlaceholder: "搜索物品、现象、标签",
@@ -2177,6 +2304,8 @@ export const appScript = String.raw`
   window.addEventListener("hashchange", route);
   document.addEventListener("click", onEditorClick, true);
   document.addEventListener("click", onClick);
+  document.addEventListener("dblclick", onImageDoubleClick);
+  document.addEventListener("pointerup", onImagePointerUp);
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("submit", onSubmit);
   document.addEventListener("input", onInput);
@@ -2204,6 +2333,7 @@ export const appScript = String.raw`
   }
 
   async function route() {
+    closeImageViewer();
     var hash = location.hash || "#/";
     if (location.pathname.indexOf("/post/") === 0 && (!location.hash || location.hash === "#/")) {
       var pathSlug = decodeURIComponent(location.pathname.slice(6));
@@ -2674,9 +2804,10 @@ export const appScript = String.raw`
     }
     var isRating = isRatingCategory(post.category);
     var coverUrl = post.coverUrl || (isRating ? defaultLevelCover(post.hazardLevel) : "");
+    var coverClass = "zoomable-image" + (!post.coverUrl && isRating ? " default-level-cover" : "");
     app.innerHTML =
       '<section class="detail">' +
-        (coverUrl ? '<div class="detail-cover"><img class="' + (!post.coverUrl && isRating ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt=""></div>' : '') +
+        (coverUrl ? '<div class="detail-cover"><img class="' + coverClass + '" src="' + escAttr(coverUrl) + '" alt="' + escAttr(post.title || "封面") + '"' + zoomableImageAttrs(coverUrl, post.title || "封面") + '></div>' : '') +
         '<article class="page-section detail-article">' +
           '<div class="detail-meta">' +
             (isRating ? '<span class="level-badge level-' + post.hazardLevel + '">' + post.hazardLevel + '</span>' : '') +
@@ -2947,6 +3078,18 @@ export const appScript = String.raw`
     var target = event.target.closest("[data-action]");
     if (!target) return;
     var action = target.getAttribute("data-action");
+    if (action === "image-zoom-close") {
+      closeImageViewer();
+      return;
+    }
+    if (action === "image-zoom-prev") {
+      moveImageViewer(-1);
+      return;
+    }
+    if (action === "image-zoom-next") {
+      moveImageViewer(1);
+      return;
+    }
     if (action === "home") {
       state.filters.category = "rating";
       state.filters.level = "";
@@ -3056,13 +3199,151 @@ export const appScript = String.raw`
     if (action === "admin-delete-user") await adminDeleteUser(target.getAttribute("data-id"));
   }
 
+  function onImageDoubleClick(event) {
+    var image = zoomImageTarget(event.target);
+    if (!image) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openImageViewer(image);
+  }
+
+  function onImagePointerUp(event) {
+    if (event.pointerType === "mouse") return;
+    var image = zoomImageTarget(event.target);
+    if (!image) return;
+    var now = Date.now();
+    var dx = event.clientX - state.imageViewer.lastTapX;
+    var dy = event.clientY - state.imageViewer.lastTapY;
+    var closeEnough = Math.sqrt(dx * dx + dy * dy) < 28;
+    if (state.imageViewer.lastTapTarget === image && now - state.imageViewer.lastTapAt < 340 && closeEnough) {
+      event.preventDefault();
+      openImageViewer(image);
+      state.imageViewer.lastTapAt = 0;
+      state.imageViewer.lastTapTarget = null;
+      return;
+    }
+    state.imageViewer.lastTapAt = now;
+    state.imageViewer.lastTapTarget = image;
+    state.imageViewer.lastTapX = event.clientX;
+    state.imageViewer.lastTapY = event.clientY;
+  }
+
   function onKeyDown(event) {
+    if (isImageViewerOpen()) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeImageViewer();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveImageViewer(-1);
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveImageViewer(1);
+        return;
+      }
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     if (!event.target.closest) return;
     var target = event.target.closest('[data-action="open-post"][data-slug]');
     if (!target || target !== event.target) return;
     event.preventDefault();
     location.hash = "#/post/" + encodeURIComponent(target.getAttribute("data-slug"));
+  }
+
+  function zoomImageTarget(node) {
+    if (state.editor && state.editor.active) return null;
+    if (!node || !node.closest) return null;
+    var image = node.closest("img[data-zoomable-image]");
+    if (!image || !image.currentSrc && !image.getAttribute("src")) return null;
+    if (!image.closest(".detail, .detail-article, .content-gallery")) return null;
+    return image;
+  }
+
+  function openImageViewer(image) {
+    var scope = image.closest(".detail") || image.closest(".page-section") || document;
+    var nodes = Array.prototype.slice.call(scope.querySelectorAll("img[data-zoomable-image]")).filter(function (item) {
+      return item.currentSrc || item.getAttribute("src");
+    });
+    var seen = {};
+    var images = [];
+    var index = 0;
+    nodes.forEach(function (item) {
+      var src = item.getAttribute("data-zoom-src") || item.currentSrc || item.getAttribute("src");
+      if (!src || seen[src]) return;
+      seen[src] = true;
+      if (item === image) index = images.length;
+      images.push({
+        src: src,
+        alt: item.getAttribute("data-zoom-alt") || item.getAttribute("alt") || "图片"
+      });
+    });
+    if (!images.length) return;
+    state.imageViewer.images = images;
+    state.imageViewer.index = index;
+    renderImageViewer();
+  }
+
+  function renderImageViewer() {
+    var root = imageViewerRoot();
+    var images = state.imageViewer.images || [];
+    var index = Math.max(0, Math.min(images.length - 1, state.imageViewer.index || 0));
+    var item = images[index];
+    if (!item) return closeImageViewer();
+    state.imageViewer.index = index;
+    document.documentElement.classList.add("image-viewer-open");
+    root.innerHTML =
+      '<div class="image-viewer-backdrop" role="dialog" aria-modal="true" aria-label="图片预览">' +
+        '<div class="image-viewer-toolbar">' +
+          '<span class="image-viewer-caption">' + esc(item.alt || "图片") + (images.length > 1 ? ' · ' + (index + 1) + '/' + images.length : '') + '</span>' +
+          '<div class="image-viewer-tools">' +
+            '<button class="image-viewer-button" data-action="image-zoom-close" title="关闭">' + icon("x") + '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="image-viewer-stage">' +
+          (images.length > 1 ? '<button class="image-viewer-button image-viewer-nav prev" data-action="image-zoom-prev" title="上一张">' + icon("chevronLeft") + '</button>' : '') +
+          '<img src="' + escAttr(item.src) + '" alt="' + escAttr(item.alt || "图片") + '" draggable="false">' +
+          (images.length > 1 ? '<button class="image-viewer-button image-viewer-nav next" data-action="image-zoom-next" title="下一张">' + icon("chevronRight") + '</button>' : '') +
+        '</div>' +
+      '</div>';
+    var backdrop = root.querySelector(".image-viewer-backdrop");
+    if (backdrop) {
+      backdrop.addEventListener("click", function (event) {
+        if (event.target === event.currentTarget) closeImageViewer();
+      });
+    }
+  }
+
+  function moveImageViewer(delta) {
+    var images = state.imageViewer.images || [];
+    if (!images.length) return;
+    state.imageViewer.index = (state.imageViewer.index + delta + images.length) % images.length;
+    renderImageViewer();
+  }
+
+  function closeImageViewer() {
+    var root = document.getElementById("image-viewer-root");
+    if (root) root.innerHTML = "";
+    document.documentElement.classList.remove("image-viewer-open");
+    state.imageViewer.images = [];
+    state.imageViewer.index = 0;
+  }
+
+  function isImageViewerOpen() {
+    return Boolean((state.imageViewer.images || []).length);
+  }
+
+  function imageViewerRoot() {
+    var root = document.getElementById("image-viewer-root");
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "image-viewer-root";
+      document.body.appendChild(root);
+    }
+    return root;
   }
 
   function onEditorClick(event) {
@@ -3976,7 +4257,7 @@ export const appScript = String.raw`
         '<h1>投稿已进入审核</h1>' +
         '<p class="post-summary">图片和正文已经保存。管理员通过后，封面图和正文插图会在公开页面显示。</p>' +
         '<div class="detail-meta"><span class="status-pill">待审核</span><span>' + esc(payload.title || created.slug || "") + '</span></div>' +
-        (coverUrl ? '<div class="detail-cover"><img src="' + escAttr(coverUrl) + '" alt="封面预览"></div>' : '') +
+        (coverUrl ? '<div class="detail-cover"><img class="zoomable-image" src="' + escAttr(coverUrl) + '" alt="封面预览"' + zoomableImageAttrs(coverUrl, "封面预览") + '></div>' : '') +
         (bodyImages.length ? '<h2 class="section-title">正文图片</h2>' + renderContentGallery(bodyImages) : '') +
         '<div class="hero-actions"><button class="primary-button" data-action="home">' + icon("back") + '<span>回首页</span></button></div>' +
       '</section>';
@@ -4494,8 +4775,13 @@ export const appScript = String.raw`
     });
     if (!cleanImages.length) return "";
     return '<div class="content-gallery" data-count="' + cleanImages.length + '">' + cleanImages.map(function (image) {
-      return '<figure class="content-gallery-item"><img src="' + escAttr(image.url) + '" alt="' + escAttr(image.alt || "正文图片") + '"></figure>';
+      var alt = image.alt || "正文图片";
+      return '<figure class="content-gallery-item"><img class="zoomable-image" src="' + escAttr(image.url) + '" alt="' + escAttr(alt) + '"' + zoomableImageAttrs(image.url, alt) + '></figure>';
     }).join("") + '</div>';
+  }
+
+  function zoomableImageAttrs(src, alt) {
+    return ' data-zoomable-image="true" data-zoom-src="' + escAttr(src || "") + '" data-zoom-alt="' + escAttr(alt || "图片") + '" title="双击放大图片"';
   }
 
   function esc(value) {
@@ -4551,7 +4837,10 @@ export const appScript = String.raw`
       comment: '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>',
       trash: '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path>',
       doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h6"></path>',
-      back: '<path d="M19 12H5"></path><path d="m12 19-7-7 7-7"></path>'
+      back: '<path d="M19 12H5"></path><path d="m12 19-7-7 7-7"></path>',
+      x: '<path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>',
+      chevronLeft: '<path d="m15 18-6-6 6-6"></path>',
+      chevronRight: '<path d="m9 18 6-6-6-6"></path>'
     };
     return '<svg ' + attrs + '>' + (paths[name] || paths.doc) + '</svg>';
   }
