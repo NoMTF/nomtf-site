@@ -8,6 +8,8 @@ type PageMeta = {
   canonical?: string;
   image?: string;
   type?: string;
+  staticHtml?: string;
+  jsonLd?: unknown;
 };
 
 export function renderPage(meta: PageMeta = {}): string {
@@ -16,6 +18,8 @@ export function renderPage(meta: PageMeta = {}): string {
   const canonical = escapeMeta(meta.canonical || `${SITE_ORIGIN}/`);
   const image = escapeMeta(meta.image || `${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}`);
   const type = escapeMeta(meta.type || "website");
+  const staticHtml = meta.staticHtml || defaultStaticHtml();
+  const jsonLd = meta.jsonLd ? `<script type="application/ld+json">${safeJsonLd(meta.jsonLd)}</script>` : "";
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -40,11 +44,7 @@ export function renderPage(meta: PageMeta = {}): string {
     <meta name="twitter:description" content="${description}">
     <meta name="twitter:image" content="${image}">
     <link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}">
-    <script>
-      if (!location.hash && location.pathname.indexOf("/post/") === 0) {
-        location.replace("/#/post/" + encodeURIComponent(decodeURIComponent(location.pathname.slice(6))));
-      }
-    </script>
+    ${jsonLd}
     <script src="/assets/app.js?v=${ASSET_VERSION}" defer></script>
   </head>
   <body>
@@ -52,14 +52,26 @@ export function renderPage(meta: PageMeta = {}): string {
     <div id="toast" aria-live="polite"></div>
     <div class="shell">
       <header id="site-header" class="site-header"></header>
-      <main id="app" class="app-main" tabindex="-1"></main>
+      <main id="app" class="app-main" tabindex="-1">${staticHtml}</main>
     </div>
   </body>
 </html>`;
 }
 
+function defaultStaticHtml(): string {
+  return '<section class="page-section detail-article">' +
+    '<h1>NoMTF 不药娘网</h1>' +
+    '<p>不药娘网-一个独立的评级网站 切勿当真。这里存放娱乐性质的评级、杂谈和站点说明。</p>' +
+    '<p>本站内容仅供娱乐和讨论，不应被当作事实判断或现实行动依据。</p>' +
+  '</section>';
+}
+
 function escapeMeta(value: string): string {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] || char);
+}
+
+function safeJsonLd(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 export function renderBlockedPage(): string {
@@ -2164,6 +2176,13 @@ export const appScript = String.raw`
 
   async function route() {
     var hash = location.hash || "#/";
+    if (location.pathname.indexOf("/post/") === 0 && (!location.hash || location.hash === "#/")) {
+      var pathSlug = decodeURIComponent(location.pathname.slice(6));
+      await loadPost(pathSlug);
+      renderPost();
+      syncEditorChrome();
+      return;
+    }
     if (hash !== "#/") state.search.open = false;
     if (hash !== "#/new") clearUploadPreviewUrls();
     if (hash === "#/admin/editor") {

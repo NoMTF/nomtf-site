@@ -168,6 +168,7 @@ const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
 const LOGIN_IP_LOCK_THRESHOLD = 20;
 const MAX_SEARCH_QUERY_LENGTH = 80;
 const MAX_SEARCH_TERMS = 8;
+const INDEXNOW_KEY = "b3d9f2a6c8e14f0db7a24591c6e83a40";
 const MAX_FINAL_RATING_LENGTH = 3;
 const MAX_RATING_REASON_LENGTH = 240;
 const MAX_TWITTER_REF_LENGTH = 160;
@@ -269,6 +270,15 @@ Sitemap: ${SITE_ORIGIN}/sitemap.xml
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "public, max-age=3600"
+    }
+  });
+});
+
+app.get(`/${INDEXNOW_KEY}.txt`, () => {
+  return new Response(INDEXNOW_KEY, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=86400"
     }
   });
 });
@@ -1429,7 +1439,7 @@ app.patch("/api/admin/site-settings", async (c) => {
 app.get("/post/:slug", async (c) => {
   const slug = c.req.param("slug");
   const row = await c.env.DB.prepare(`
-    SELECT p.title, p.slug, p.summary, p.content, p.cover_key,
+    SELECT p.title, p.slug, p.summary, p.content, p.cover_key, p.category, p.hazard_level, p.final_rating, p.rating_reason, p.twitter_ref, p.created_at, p.updated_at,
       COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name
     FROM posts p
     JOIN users u ON u.id = p.author_id
@@ -1449,12 +1459,18 @@ app.get("/post/:slug", async (c) => {
     });
   }
   const coverKey = String(row.cover_key ?? "");
+  const title = String(row.title);
+  const description = seoDescription(row.summary || row.content);
+  const canonical = postPublicUrl(String(row.slug));
+  const image = coverKey ? `${SITE_ORIGIN}/media/${coverKey}` : undefined;
   return new Response(renderPage({
-    title: `${String(row.title)} - NoMTF 不药娘网`,
-    description: seoDescription(row.summary || row.content),
-    canonical: postPublicUrl(String(row.slug)),
-    image: coverKey ? `${SITE_ORIGIN}/media/${coverKey}` : undefined,
-    type: "article"
+    title: `${title} - NoMTF 不药娘网`,
+    description,
+    canonical,
+    image,
+    type: "article",
+    staticHtml: renderStaticPostHtml(row),
+    jsonLd: buildPostJsonLd(row, canonical, image)
   }), {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
@@ -2773,6 +2789,62 @@ function postPublicUrl(slug: string): string {
   return `${SITE_ORIGIN}/post/${encodeURIComponent(slug)}`;
 }
 
+function renderStaticPostHtml(row: Record<string, unknown>): string {
+  const title = htmlEscape(row.title);
+  const author = htmlEscape(row.author_name ?? "匿名");
+  const category = htmlEscape(row.category ?? "rating");
+  const coverKey = String(row.cover_key ?? "");
+  const cover = coverKey ? `<figure class="detail-cover"><img src="/media/${htmlAttr(coverKey)}" alt="${title}"></figure>` : "";
+  const rating = String(row.category ?? "rating") === "rating"
+    ? `<p><strong>危害等级：</strong>${htmlEscape(row.hazard_level ?? "")}</p>` +
+      (row.final_rating ? `<p><strong>最终等级：</strong>${htmlEscape(row.final_rating)}</p>` : "") +
+      (row.rating_reason ? `<p><strong>评级原因：</strong>${htmlEscape(row.rating_reason)}</p>` : "")
+    : "";
+  const twitter = row.twitter_ref ? `<p><strong>推特：</strong>${htmlEscape(row.twitter_ref)}</p>` : "";
+  return `<article class="page-section detail-article">
+    ${cover}
+    <h1>${title}</h1>
+    <p><strong>作者：</strong>${author} <strong>分类：</strong>${category}</p>
+    ${row.summary ? `<p>${htmlEscape(row.summary)}</p>` : ""}
+    ${rating}
+    <div class="content">${staticParagraphs(row.content)}</div>
+    ${twitter}
+  </article>`;
+}
+
+function buildPostJsonLd(row: Record<string, unknown>, canonical: string, image?: string) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: String(row.title ?? ""),
+    description: seoDescription(row.summary || row.content),
+    author: {
+      "@type": "Person",
+      name: String(row.author_name ?? "匿名")
+    },
+    publisher: {
+      "@type": "Organization",
+      name: "NoMTF 不药娘网",
+      url: SITE_ORIGIN
+    },
+    mainEntityOfPage: canonical,
+    url: canonical,
+    image: image ? [image] : [`${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}`],
+    datePublished: String(row.created_at ?? ""),
+    dateModified: String(row.updated_at ?? row.created_at ?? "")
+  };
+}
+
+function staticParagraphs(value: unknown): string {
+  return String(value ?? "")
+    .replace(/!\[[^\]]*]\((\/media\/[^)]+)\)/g, (_match, url) => `<figure><img src="${htmlAttr(url)}" alt="正文图片"></figure>`)
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.startsWith("<figure>") ? part : `<p>${htmlEscape(part).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
 function seoDescription(value: unknown): string {
   const text = String(value ?? "")
     .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
@@ -2780,6 +2852,14 @@ function seoDescription(value: unknown): string {
     .replace(/\s+/g, " ")
     .trim();
   return cleanText(text || SITE_DESCRIPTION, 150);
+}
+
+function htmlEscape(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] || char);
+}
+
+function htmlAttr(value: unknown): string {
+  return htmlEscape(value);
 }
 
 function xmlEscape(value: unknown): string {
