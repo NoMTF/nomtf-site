@@ -271,13 +271,13 @@ a { color: inherit; }
   top: calc(100% + 8px);
   z-index: 30;
   display: none;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr);
+  gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, .98);
   box-shadow: 0 18px 42px rgba(53, 83, 128, .16);
-  padding: 12px;
+  padding: 10px;
 }
 
 .search-shell.is-open .search-panel {
@@ -316,27 +316,28 @@ a { color: inherit; }
 
 .hot-search-list {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 5px;
 }
 
 .hot-search-item {
-  min-height: 32px;
+  min-height: 28px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--ink);
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  padding: 0 7px;
+  gap: 5px;
+  padding: 0 6px;
   text-align: left;
   font-size: 12px;
 }
 
 .hot-search-rank {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   border-radius: 7px;
@@ -354,6 +355,7 @@ a { color: inherit; }
 
 .hot-search-count {
   color: var(--muted);
+  font-size: 11px;
 }
 
 .icon-button,
@@ -565,21 +567,21 @@ a { color: inherit; }
 }
 
 .hot-posts {
-  margin: 0 0 22px;
-  padding: 16px;
+  margin: 0 0 14px;
+  padding: 12px;
 }
 
 .hot-posts-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .hot-posts-head h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: 15px;
 }
 
 .hot-posts-head span {
@@ -590,26 +592,26 @@ a { color: inherit; }
 
 .hot-post-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .hot-post-item {
-  min-height: 58px;
+  min-height: 42px;
   border: 1px solid var(--soft-line);
   border-radius: 8px;
   background: #fff;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: center;
-  padding: 9px 10px;
+  padding: 6px 8px;
   cursor: pointer;
   transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
 
 .hot-post-rank {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   border-radius: 8px;
@@ -633,19 +635,30 @@ a { color: inherit; }
 
 .hot-post-main span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .hot-post-stats {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
+}
+
+.hot-post-item .mini-stat {
+  min-height: 22px;
+  gap: 3px;
+  font-size: 11px;
+}
+
+.hot-post-item .mini-stat svg {
+  width: 14px;
+  height: 14px;
 }
 
 .layout {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  gap: 22px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
 }
 
 .panel {
@@ -672,16 +685,22 @@ a { color: inherit; }
 }
 
 .filters {
-  position: sticky;
-  top: 88px;
-  padding: 16px;
+  position: static;
+  padding: 12px;
   align-self: start;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+  gap: 10px;
+  align-items: end;
 }
 
 .filter-group {
   display: grid;
-  gap: 8px;
-  margin-bottom: 18px;
+  gap: 6px;
+  margin-bottom: 0;
 }
 
 .filter-group label,
@@ -706,7 +725,7 @@ a { color: inherit; }
 .segmented {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
+  gap: 5px;
 }
 
 .category-tabs {
@@ -714,13 +733,26 @@ a { color: inherit; }
 }
 
 .segment {
-  height: 34px;
+  height: 31px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
   font-size: 13px;
   font-weight: 850;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.active-filter-note {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .segment.active {
@@ -1563,9 +1595,7 @@ svg {
   .layout {
     grid-template-columns: 1fr;
   }
-  .filters {
-    position: static;
-  }
+
   .post-card {
     grid-template-columns: 180px minmax(0, 1fr);
   }
@@ -1812,17 +1842,17 @@ svg {
   }
 
   .filters {
-    position: sticky;
-    top: 112px;
+    position: static;
+    top: auto;
     z-index: 8;
-    padding: 12px;
+    padding: 10px;
     background: rgba(255, 255, 255, .9);
     backdrop-filter: blur(14px);
     margin-bottom: 0;
   }
 
   .filter-group {
-    margin-bottom: 12px;
+    margin-bottom: 0;
   }
 
   .segmented {
@@ -1830,14 +1860,14 @@ svg {
   }
 
   .segment {
-    height: 38px;
-    font-size: 14px;
+    height: 34px;
+    font-size: 13px;
   }
 
   .filters .ghost-button,
   .filters .plain-button {
     min-width: 0;
-    width: calc(50% - 4px);
+    width: auto;
   }
 
   .feed {
@@ -2198,6 +2228,15 @@ svg {
     padding-inline: 8px;
   }
 
+  .filter-grid {
+    gap: 8px;
+  }
+
+  .segment {
+    height: 32px;
+    font-size: 12px;
+  }
+
   .brand-mark {
     width: 32px;
     height: 32px;
@@ -2436,7 +2475,7 @@ export const appScript = String.raw`
 
   function renderSearchPanel() {
     var history = state.search.history || [];
-    var trends = state.search.trends || [];
+    var trends = (state.search.trends || []).slice(0, 10);
     return '<div class="search-panel">' +
       '<div><h3>搜索历史</h3>' +
         (history.length ? '<div class="search-chip-list">' + history.map(function (item) {
@@ -2467,7 +2506,7 @@ export const appScript = String.raw`
     if (shouldLoadTrends) {
       try {
         var data = await api("/api/search/trends");
-        state.search.trends = data.trends || [];
+        state.search.trends = (data.trends || []).slice(0, 10);
       } catch (_) {
         state.search.trends = [];
       } finally {
@@ -2530,8 +2569,8 @@ export const appScript = String.raw`
     var data = await api("/api/posts?" + params.toString());
     state.posts = data.posts || [];
     try {
-      var hot = await api("/api/posts/hot?limit=6");
-      state.hotPosts = hot.posts || [];
+      var hot = await api("/api/posts/hot?limit=5");
+      state.hotPosts = (hot.posts || []).slice(0, 5);
     } catch (_) {
       state.hotPosts = [];
     }
@@ -2605,7 +2644,7 @@ export const appScript = String.raw`
   }
 
   function renderHotPosts() {
-    var posts = state.hotPosts || [];
+    var posts = (state.hotPosts || []).slice(0, 5);
     if (!posts.length) return "";
     return '<section class="hot-posts panel">' +
       '<div class="hot-posts-head"><h2>帖子热度排行</h2><span>浏览、点赞、回复综合排序</span></div>' +
@@ -2748,11 +2787,14 @@ export const appScript = String.raw`
       return '<button class="segment ' + (state.filters.category === item[0] ? "active" : "") + '" data-action="filter-category" data-category="' + item[0] + '">' + item[1] + '</button>';
     }).join("");
     return '<aside class="panel filters">' +
-      '<div class="filter-group"><label>分类</label><div class="segmented category-tabs">' + categoryButtons + '</div></div>' +
-      (showLevelFilter ? '<div class="filter-group"><label>等级筛选</label><div class="segmented">' + buttons + '</div></div>' : '') +
-      '<div class="filter-group"><label>标签</label><input id="tag-filter" value="' + esc(state.filters.tag) + '" placeholder="输入标签名"></div>' +
-      '<button class="ghost-button" data-action="apply-tag">' + icon("search") + '<span>筛选</span></button> ' +
-      '<button class="plain-button" data-action="clear-filters">清空</button>' +
+      '<div class="filter-grid">' +
+        '<div class="filter-group"><label>分类</label><div class="segmented category-tabs">' + categoryButtons + '</div></div>' +
+        (showLevelFilter ? '<div class="filter-group"><label>等级筛选</label><div class="segmented">' + buttons + '</div></div>' : '<div class="filter-group"><label>筛选</label><span class="active-filter-note">当前分类不使用等级筛选</span></div>') +
+      '</div>' +
+      '<div class="filter-actions">' +
+        (state.filters.tag ? '<span class="active-filter-note">#' + esc(state.filters.tag) + '</span>' : '') +
+        '<button class="plain-button" data-action="clear-filters">清空</button>' +
+      '</div>' +
     '</aside>';
   }
 
@@ -3166,10 +3208,6 @@ export const appScript = String.raw`
     if (action === "tag") {
       state.filters.tag = target.getAttribute("data-tag") || "";
       location.hash = "#/";
-      await route();
-    }
-    if (action === "apply-tag") {
-      state.filters.tag = document.getElementById("tag-filter").value.trim();
       await route();
     }
     if (action === "clear-filters") {
