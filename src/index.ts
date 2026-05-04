@@ -8,6 +8,7 @@ type UserStatus = "active" | "muted" | "banned";
 type PermissionLevel = "allow" | "muted" | "banned";
 type PostStatus = "draft" | "pending" | "published" | "hidden" | "rejected" | "deleted";
 type PostCategory = "rating" | "about" | "talk";
+type TelegramStep = "category" | "title" | "finalRating" | "hazardLevel" | "ratingReason" | "twitterRef" | "tags" | "summary" | "nsfw" | "cover" | "bodyImages" | "content" | "confirm";
 
 type User = {
   id: string;
@@ -61,6 +62,79 @@ type RateLimitRule = {
   message: string;
 };
 
+type SubmissionInput = {
+  title: string;
+  summary: string;
+  content: string;
+  category: Exclude<PostCategory, "about">;
+  finalRating: string;
+  ratingReason: string;
+  twitterRef: string;
+  hazardLevel: number;
+  nsfw: boolean;
+  requestedSlug: string;
+  coverKey: string | null;
+  tags: string[];
+};
+
+type CreatedSubmission = {
+  id: string;
+  slug: string;
+  status: PostStatus;
+  category: Exclude<PostCategory, "about">;
+};
+
+type TelegramDraft = Partial<{
+  category: Exclude<PostCategory, "about">;
+  title: string;
+  finalRating: string;
+  hazardLevel: number;
+  ratingReason: string;
+  twitterRef: string;
+  tags: string;
+  summary: string;
+  nsfw: boolean;
+  coverKey: string;
+  bodyImageKeys: string[];
+  content: string;
+}>;
+
+type TelegramSession = {
+  chatId: string;
+  step: TelegramStep;
+  draft: TelegramDraft;
+};
+
+type TelegramPhotoSize = {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+};
+
+type TelegramMessage = {
+  message_id: number;
+  chat: { id: number | string; type?: string };
+  from?: { id: number; first_name?: string; username?: string };
+  text?: string;
+  caption?: string;
+  photo?: TelegramPhotoSize[];
+};
+
+type TelegramCallbackQuery = {
+  id: string;
+  from?: { id: number; first_name?: string; username?: string };
+  data?: string;
+  message?: TelegramMessage;
+};
+
+type TelegramUpdate = {
+  update_id: number;
+  message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
+};
+
 type AppEnv = {
   Bindings: Env;
   Variables: Variables;
@@ -77,12 +151,15 @@ const MAX_POST_BYTES = 80_000;
 const MAX_COMMENT_LENGTH = 200;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_MULTIPART_IMAGE_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
+const MAX_TELEGRAM_BODY_IMAGES = 10;
+const TELEGRAM_API_BASE = "https://api.telegram.org";
 const PASSWORD_ITERATIONS = 100_000;
 const PASSWORD_MIN_LENGTH = 10;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const REGISTER_IP_COOLDOWN_SECONDS = 5 * 60;
 const CONTENT_WRITE_COOLDOWN_SECONDS = 30;
 const COMMENT_WRITE_COOLDOWN_SECONDS = 5;
+const SUBMISSION_WRITE_COOLDOWN_SECONDS = 30;
 const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
 const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
@@ -631,11 +708,46 @@ app.post("/api/posts", async (c) => {
   return c.json({ ok: true, id, slug, status }, 201);
 });
 
+app.post("/api/submissions/media", async (c) => {
+  const deniedApi = requireSubmissionApiAccess(c);
+  if (deniedApi) return deniedApi;
+  const denied = requireWriteAccess(c);
+  if (denied) return denied;
+  const contentLength = Number(c.req.header("Content-Length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_MULTIPART_IMAGE_BYTES) {
+    return c.json({ error: "图片不能超过 15MB" }, 413);
+  }
+  const limited = await enforceRateLimits(c, [
+    {
+      bucket: "submission_media_api_ip",
+      subject: ipSubject(c),
+      limit: 60,
+      windowSeconds: 10 * 60,
+      message: "投稿 API 图片上传太频繁了，请稍后再试"
+    }
+  ]);
+  if (limited) return limited;
+
+  let form: FormData;
+  try {
+    form = await c.req.raw.formData();
+  } catch {
+    return c.json({ error: "图片表单解析失败" }, 400);
+  }
+
+  const file = form.get("file");
+  if (!isUploadedFile(file)) return c.json({ error: "没有收到图片" }, 400);
+  try {
+    const uploaded = await storeImageFile(c.env, file, "submission-api");
+    return c.json({ ok: true, key: uploaded.key, url: uploaded.url }, 201);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "图片上传失败" }, 400);
+  }
+});
+
 app.post("/api/submissions", async (c) => {
-  const apiKey = getSubmissionApiKey(c.env);
-  if (!apiKey) return c.json({ error: "投稿 API 尚未开启，请先配置 SUBMISSION_API_KEY" }, 503);
-  const provided = c.req.header("X-NoMTF-Submit-Key") ?? c.req.header("Authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!safeEqualText(provided, apiKey)) return c.json({ error: "投稿 API key 不正确" }, 401);
+  const deniedApi = requireSubmissionApiAccess(c);
+  if (deniedApi) return deniedApi;
   const denied = requireWriteAccess(c);
   if (denied) return denied;
   const limited = await enforceRateLimits(c, [
@@ -652,7 +764,8 @@ app.post("/api/submissions", async (c) => {
   const body = await readJson(c);
   const title = cleanText(body.title, 120);
   const summary = cleanText(body.summary, 240);
-  const content = cleanText(body.content, MAX_POST_BYTES);
+  const bodyImageKeys = cleanR2Keys(body.bodyImageKeys ?? body.body_image_keys ?? body.imageKeys ?? body.image_keys).slice(0, MAX_TELEGRAM_BODY_IMAGES);
+  const content = cleanText(appendImageKeysToContent(String(body.content ?? ""), bodyImageKeys), MAX_POST_BYTES);
   const category = cleanPostCategory(body.category, "rating");
   const isRating = category === "rating";
   const finalRating = isRating ? cleanFinalRating(body.finalRating ?? body.final_rating) : "";
@@ -661,6 +774,7 @@ app.post("/api/submissions", async (c) => {
   const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
+  const coverKey = optionalR2Key(body.coverKey ?? body.cover_key);
   const tags = cleanTags(body.tags);
   if (category === "about") return c.json({ error: "关于页只能由管理员在后台发布" }, 403);
   if (!title || title.length < 2) return c.json({ error: "标题太短了" }, 400);
@@ -675,20 +789,40 @@ app.post("/api/submissions", async (c) => {
     return c.json({ error: "最终等级必填，格式只能是 1-、1、1+ 到 5-、5、5+" }, 400);
   }
 
-  const authorId = await getSubmissionAuthorId(c.env.DB);
-  if (!authorId) return c.json({ error: "没有可用的管理员作者账号" }, 500);
-  const now = nowIso();
-  const id = crypto.randomUUID();
-  const slug = await uniqueSlug(c.env.DB, requestedSlug || title);
-  const status: PostStatus = category === "talk" ? "published" : "pending";
-  await c.env.DB.prepare(`
-    INSERT INTO posts (id, title, slug, summary, content, final_rating, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
-  `)
-    .bind(id, title, slug, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, status, authorId, now, now)
-    .run();
-  await syncTags(c.env.DB, id, tags);
-  return c.json({ ok: true, id, slug, status, category }, 201);
+  const cooldown = await submissionApiCooldown(c);
+  if (cooldown) return cooldown;
+
+  const created = await createExternalSubmission(c.env.DB, {
+    title,
+    summary,
+    content,
+    category: category as Exclude<PostCategory, "about">,
+    finalRating,
+    ratingReason,
+    twitterRef,
+    hazardLevel,
+    nsfw,
+    requestedSlug,
+    coverKey,
+    tags
+  });
+  if (!created) return c.json({ error: "没有可用的管理员作者账号" }, 500);
+  await setCooldown(c.env.DB, "submission_api_ip", ipSubject(c), SUBMISSION_WRITE_COOLDOWN_SECONDS);
+  return c.json({ ok: true, ...created }, 201);
+});
+
+app.post("/api/telegram/webhook", async (c) => {
+  const token = getTelegramBotToken(c.env);
+  const secret = getTelegramWebhookSecret(c.env);
+  if (!token || !secret) return c.json({ error: "Telegram bot 尚未配置" }, 503);
+  const provided = c.req.header("X-Telegram-Bot-Api-Secret-Token") ?? "";
+  if (!safeEqualText(provided, secret)) return c.json({ error: "Telegram webhook secret 不正确" }, 403);
+
+  const update = await readJson(c) as TelegramUpdate;
+  c.executionCtx.waitUntil(handleTelegramUpdate(c.env, update).catch((error) => {
+    console.error(JSON.stringify({ level: "error", message: "telegram webhook failed", error: String(error) }));
+  }));
+  return c.json({ ok: true });
 });
 
 app.patch("/api/posts/:id", async (c) => {
@@ -854,31 +988,12 @@ app.post("/api/media", async (c) => {
   if (!isUploadedFile(file)) {
     return c.json({ error: "没有收到图片" }, 400);
   }
-  if (file.size <= 0) {
-    return c.json({ error: "图片文件为空，请重新选择" }, 400);
+  try {
+    const uploaded = await storeImageFile(c.env, file, user.id);
+    return c.json({ ok: true, key: uploaded.key, url: uploaded.url }, 201);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "图片上传失败" }, 400);
   }
-  if (file.size > MAX_IMAGE_BYTES) {
-    return c.json({ error: "图片不能超过 15MB" }, 413);
-  }
-
-  const bytes = await file.arrayBuffer();
-  const contentType = inferImageContentType(file.name, file.type, bytes);
-  if (!contentType) {
-    return c.json({ error: "只能上传 JPG、PNG、GIF、WebP 或 AVIF 图片" }, 415);
-  }
-
-  const ext = extensionFromName(file.name) || extensionFromContentType(contentType);
-  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`;
-  await c.env.MEDIA.put(key, bytes, {
-    httpMetadata: {
-      contentType,
-      cacheControl: "public, max-age=31536000, immutable"
-    },
-    customMetadata: {
-      uploadedBy: user.id
-    }
-  });
-  return c.json({ ok: true, key, url: `/media/${key}` }, 201);
 });
 
 app.get("/api/admin/posts", async (c) => {
@@ -1538,12 +1653,22 @@ async function enforceFixedWindowRateLimit(c: AppContext, rule: RateLimitRule): 
 
 async function requireCooldownAvailable(c: AppContext, bucket: string, subject: string, message: string): Promise<Response | null> {
   if (isAdminRequest(c)) return null;
-  const row = await c.env.DB.prepare("SELECT expires_at FROM rate_cooldowns WHERE bucket = ? AND subject = ?")
-    .bind(bucket, subject)
-    .first<{ expires_at: string }>();
-  const retryAfter = secondsUntil(row?.expires_at ?? "");
+  const retryAfter = await getCooldownSeconds(c.env.DB, bucket, subject);
   if (retryAfter <= 0) return null;
   return rateLimitedResponse(c, message, retryAfter);
+}
+
+async function getCooldownSeconds(db: D1Database, bucket: string, subject: string): Promise<number> {
+  const row = await db.prepare("SELECT expires_at FROM rate_cooldowns WHERE bucket = ? AND subject = ?")
+    .bind(bucket, subject)
+    .first<{ expires_at: string }>();
+  return secondsUntil(row?.expires_at ?? "");
+}
+
+async function submissionApiCooldown(c: AppContext): Promise<Response | null> {
+  const retryAfter = await getCooldownSeconds(c.env.DB, "submission_api_ip", ipSubject(c));
+  if (retryAfter <= 0) return null;
+  return rateLimitedResponse(c, `投稿冷却中，剩余 ${retryAfter} 秒`, retryAfter);
 }
 
 async function setCooldown(db: D1Database, bucket: string, subject: string, seconds: number): Promise<void> {
@@ -1852,6 +1977,587 @@ async function uniqueSlug(db: D1Database, source: string, excludePostId = ""): P
   return `${base}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+async function createExternalSubmission(db: D1Database, input: SubmissionInput): Promise<CreatedSubmission | null> {
+  const authorId = await getSubmissionAuthorId(db);
+  if (!authorId) return null;
+  const now = nowIso();
+  const id = crypto.randomUUID();
+  const slug = await uniqueSlug(db, input.requestedSlug || input.title);
+  const status: PostStatus = input.category === "talk" ? "published" : "pending";
+  await db.prepare(`
+    INSERT INTO posts (id, title, slug, summary, content, final_rating, rating_reason, twitter_ref, category, hazard_level, nsfw, cover_key, status, author_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+    .bind(
+      id,
+      input.title,
+      slug,
+      input.summary,
+      input.content,
+      input.finalRating,
+      input.ratingReason,
+      input.twitterRef,
+      input.category,
+      input.hazardLevel,
+      input.nsfw ? 1 : 0,
+      input.coverKey,
+      status,
+      authorId,
+      now,
+      now
+    )
+    .run();
+  await syncTags(db, id, input.tags);
+  return { id, slug, status, category: input.category };
+}
+
+function requireSubmissionApiAccess(c: AppContext): Response | null {
+  const apiKey = getSubmissionApiKey(c.env);
+  if (!apiKey) return c.json({ error: "投稿 API 尚未开启，请先配置 SUBMISSION_API_KEY" }, 503);
+  const provided = c.req.header("X-NoMTF-Submit-Key") ?? c.req.header("Authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (!provided || !safeEqualText(provided, apiKey)) return c.json({ error: "投稿 API key 不正确" }, 401);
+  return null;
+}
+
+async function storeImageFile(env: Env, file: File, uploadedBy: string) {
+  if (file.size <= 0) {
+    throw new Error("图片文件为空，请重新选择");
+  }
+  const bytes = await file.arrayBuffer();
+  return storeImageBytes(env, bytes, file.name, file.type, uploadedBy);
+}
+
+async function storeImageBytes(env: Env, bytes: ArrayBuffer, name: string, declaredType: string, uploadedBy: string) {
+  if (bytes.byteLength <= 0) {
+    throw new Error("图片文件为空，请重新选择");
+  }
+  if (bytes.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error("图片不能超过 15MB");
+  }
+  const contentType = inferImageContentType(name, declaredType, bytes);
+  if (!contentType) {
+    throw new Error("只能上传 JPG、PNG、GIF、WebP 或 AVIF 图片");
+  }
+
+  const ext = extensionFromName(name) || extensionFromContentType(contentType);
+  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${ext}`;
+  await env.MEDIA.put(key, bytes, {
+    httpMetadata: {
+      contentType,
+      cacheControl: "public, max-age=31536000, immutable"
+    },
+    customMetadata: {
+      uploadedBy: uploadedBy.slice(0, 120)
+    }
+  });
+  return { key, url: `/media/${key}` };
+}
+
+function cleanR2Keys(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : String(value ?? "").split(/[\n,]+/);
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const item of raw) {
+    const key = optionalR2Key(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+    if (keys.length >= MAX_TELEGRAM_BODY_IMAGES) break;
+  }
+  return keys;
+}
+
+function appendImageKeysToContent(content: string, keys: string[]): string {
+  let text = String(content ?? "").trim();
+  for (const key of keys) {
+    text += `\n\n![${fileNameFromKey(key)}](/media/${key})\n`;
+  }
+  return text.trim();
+}
+
+async function handleTelegramUpdate(env: Env, update: TelegramUpdate): Promise<void> {
+  if (update.callback_query) {
+    await answerTelegramCallback(env, update.callback_query.id);
+    await handleTelegramCallback(env, update.callback_query);
+    return;
+  }
+  if (update.message) {
+    await handleTelegramMessage(env, update.message);
+  }
+}
+
+async function handleTelegramCallback(env: Env, callback: TelegramCallbackQuery): Promise<void> {
+  const data = callback.data ?? "";
+  const chatId = telegramChatId(callback.message) || (callback.from ? String(callback.from.id) : "");
+  if (!chatId) return;
+
+  if (data === "tg:new") {
+    await startTelegramSubmission(env, chatId);
+    return;
+  }
+  if (data === "tg:cancel") {
+    await deleteTelegramSession(env.DB, chatId);
+    await sendTelegramMessage(env, chatId, "已取消本次投稿。", startKeyboard());
+    return;
+  }
+  if (data.startsWith("tg:cat:")) {
+    const category = data.endsWith(":talk") ? "talk" : "rating";
+    await saveTelegramSession(env.DB, chatId, "title", { category });
+    await sendTelegramMessage(env, chatId, `已选择：${categoryTextForTelegram(category)}\n\n第一步：请发送标题（2-120 字）。`, cancelKeyboard());
+    return;
+  }
+
+  const session = await getTelegramSession(env.DB, chatId);
+  if (!session) {
+    await sendTelegramMessage(env, chatId, "当前没有进行中的投稿。", startKeyboard());
+    return;
+  }
+  const draft = session.draft;
+
+  if (data.startsWith("tg:hazard:")) {
+    const level = Number(data.replace("tg:hazard:", ""));
+    if (!Number.isInteger(level) || level < 1 || level > 5) {
+      await askTelegramHazardLevel(env, chatId, draft);
+      return;
+    }
+    draft.hazardLevel = level;
+    await saveTelegramSession(env.DB, chatId, "ratingReason", draft);
+    await sendTelegramMessage(env, chatId, "请发送评级原因（会显示在正文上方，最多 240 字）。", cancelKeyboard());
+    return;
+  }
+  if (data.startsWith("tg:nsfw:")) {
+    draft.nsfw = data.endsWith(":1");
+    await saveTelegramSession(env.DB, chatId, "cover", draft);
+    await sendTelegramMessage(env, chatId, "请发送封面图（只收 1 张）。也可以点跳过。", skipKeyboard("cover"));
+    return;
+  }
+  if (data === "tg:skip:tags") {
+    draft.tags = "";
+    await saveTelegramSession(env.DB, chatId, "summary", draft);
+    await sendTelegramMessage(env, chatId, "请发送摘要（最多 240 字）。也可以点跳过。", skipKeyboard("summary"));
+    return;
+  }
+  if (data === "tg:skip:summary") {
+    draft.summary = "";
+    await saveTelegramSession(env.DB, chatId, "nsfw", draft);
+    await askTelegramNsfw(env, chatId);
+    return;
+  }
+  if (data === "tg:skip:cover") {
+    draft.coverKey = "";
+    await saveTelegramSession(env.DB, chatId, "bodyImages", draft);
+    await sendTelegramMessage(env, chatId, "现在可以连续发送正文图片，最多 10 张。发完点“图片完成”，也可以跳过。", bodyImagesKeyboard(draft));
+    return;
+  }
+  if (data === "tg:skip:bodyImages" || data === "tg:done:bodyImages") {
+    await saveTelegramSession(env.DB, chatId, "content", draft);
+    await sendTelegramMessage(env, chatId, "最后一步：请发送正文文字（至少 10 字）。", cancelKeyboard());
+    return;
+  }
+  if (data === "tg:confirm") {
+    await finalizeTelegramSubmission(env, chatId, draft);
+  }
+}
+
+async function handleTelegramMessage(env: Env, message: TelegramMessage): Promise<void> {
+  const chatId = telegramChatId(message);
+  if (!chatId) return;
+  const text = cleanTelegramText(message.text ?? message.caption ?? "");
+  const lower = text.toLowerCase();
+  if (lower === "/start" || lower === "/help") {
+    await deleteTelegramSession(env.DB, chatId);
+    await sendTelegramMessage(env, chatId, "这里是 NoMTF 投稿机器人。点下面的按钮开始，我会一步一步问你要投稿信息和图片。", startKeyboard());
+    return;
+  }
+  if (lower === "/new" || text === "投稿" || text === "开始投稿") {
+    await startTelegramSubmission(env, chatId);
+    return;
+  }
+  if (lower === "/cancel" || text === "取消") {
+    await deleteTelegramSession(env.DB, chatId);
+    await sendTelegramMessage(env, chatId, "已取消本次投稿。", startKeyboard());
+    return;
+  }
+
+  const session = await getTelegramSession(env.DB, chatId);
+  if (!session) {
+    await sendTelegramMessage(env, chatId, "还没有开始投稿。点按钮开始。", startKeyboard());
+    return;
+  }
+
+  if (session.step === "cover" && message.photo?.length) {
+    const uploaded = await uploadTelegramPhoto(env, message.photo, chatId);
+    session.draft.coverKey = uploaded.key;
+    await saveTelegramSession(env.DB, chatId, "bodyImages", session.draft);
+    await sendTelegramMessage(env, chatId, "封面已收到。现在可以发送正文图片，最多 10 张。发完点“图片完成”。", bodyImagesKeyboard(session.draft));
+    return;
+  }
+  if (session.step === "bodyImages" && message.photo?.length) {
+    const keys = session.draft.bodyImageKeys ?? [];
+    if (keys.length >= MAX_TELEGRAM_BODY_IMAGES) {
+      await sendTelegramMessage(env, chatId, "正文图片已经满 10 张了，请点“图片完成”进入正文。", bodyImagesKeyboard(session.draft));
+      return;
+    }
+    const uploaded = await uploadTelegramPhoto(env, message.photo, chatId);
+    session.draft.bodyImageKeys = keys.concat(uploaded.key);
+    await saveTelegramSession(env.DB, chatId, "bodyImages", session.draft);
+    await sendTelegramMessage(env, chatId, `已收到第 ${session.draft.bodyImageKeys.length} 张正文图片。还可以继续发，或点“图片完成”。`, bodyImagesKeyboard(session.draft));
+    return;
+  }
+
+  if (!text) {
+    await sendTelegramMessage(env, chatId, "这一步需要文字或图片。发送 /cancel 可以取消。", cancelKeyboard());
+    return;
+  }
+
+  await handleTelegramTextStep(env, chatId, session, text);
+}
+
+async function handleTelegramTextStep(env: Env, chatId: string, session: TelegramSession, text: string): Promise<void> {
+  const draft = session.draft;
+  if ((session.step === "tags" || session.step === "summary" || session.step === "cover" || session.step === "bodyImages") && isSkipText(text)) {
+    const next = session.step === "tags" ? "summary" : session.step === "summary" ? "nsfw" : session.step === "cover" ? "bodyImages" : "content";
+    if (session.step === "tags") draft.tags = "";
+    if (session.step === "summary") draft.summary = "";
+    if (session.step === "cover") draft.coverKey = "";
+    await saveTelegramSession(env.DB, chatId, next, draft);
+    if (next === "summary") await sendTelegramMessage(env, chatId, "请发送摘要（最多 240 字）。也可以点跳过。", skipKeyboard("summary"));
+    else if (next === "nsfw") await askTelegramNsfw(env, chatId);
+    else if (next === "bodyImages") await sendTelegramMessage(env, chatId, "现在可以连续发送正文图片，最多 10 张。发完点“图片完成”，也可以跳过。", bodyImagesKeyboard(draft));
+    else await sendTelegramMessage(env, chatId, "最后一步：请发送正文文字（至少 10 字）。", cancelKeyboard());
+    return;
+  }
+
+  if (session.step === "title") {
+    const title = cleanText(text, 120);
+    if (title.length < 2) {
+      await sendTelegramMessage(env, chatId, "标题太短了，请重新发送 2-120 字标题。", cancelKeyboard());
+      return;
+    }
+    draft.title = title;
+    if (draft.category === "rating") {
+      await saveTelegramSession(env.DB, chatId, "finalRating", draft);
+      await sendTelegramMessage(env, chatId, "请发送最终评级，格式例如：1-、1、1+、2、3+、5。", cancelKeyboard());
+    } else {
+      await saveTelegramSession(env.DB, chatId, "tags", draft);
+      await sendTelegramMessage(env, chatId, "请发送标签，多个标签用逗号分隔。也可以点跳过。", skipKeyboard("tags"));
+    }
+    return;
+  }
+  if (session.step === "finalRating") {
+    const finalRating = cleanFinalRating(text);
+    if (!isValidFinalRating(finalRating)) {
+      await sendTelegramMessage(env, chatId, "最终评级格式不对，只能是 1-、1、1+ 到 5-、5、5+。请重新发送。", cancelKeyboard());
+      return;
+    }
+    draft.finalRating = finalRating;
+    await saveTelegramSession(env.DB, chatId, "hazardLevel", draft);
+    await askTelegramHazardLevel(env, chatId, draft);
+    return;
+  }
+  if (session.step === "hazardLevel") {
+    const level = Number(text);
+    if (!Number.isInteger(level) || level < 1 || level > 5) {
+      await askTelegramHazardLevel(env, chatId, draft);
+      return;
+    }
+    draft.hazardLevel = level;
+    await saveTelegramSession(env.DB, chatId, "ratingReason", draft);
+    await sendTelegramMessage(env, chatId, "请发送评级原因（会显示在正文上方，最多 240 字）。", cancelKeyboard());
+    return;
+  }
+  if (session.step === "ratingReason") {
+    draft.ratingReason = cleanText(text, MAX_RATING_REASON_LENGTH);
+    await saveTelegramSession(env.DB, chatId, "twitterRef", draft);
+    await sendTelegramMessage(env, chatId, "请发送推特链接或 @用户名；没有就发“占位符”。", cancelKeyboard());
+    return;
+  }
+  if (session.step === "twitterRef") {
+    draft.twitterRef = cleanText(text, MAX_TWITTER_REF_LENGTH);
+    await saveTelegramSession(env.DB, chatId, "tags", draft);
+    await sendTelegramMessage(env, chatId, "请发送标签，多个标签用逗号分隔。也可以点跳过。", skipKeyboard("tags"));
+    return;
+  }
+  if (session.step === "tags") {
+    draft.tags = cleanText(text, 160);
+    await saveTelegramSession(env.DB, chatId, "summary", draft);
+    await sendTelegramMessage(env, chatId, "请发送摘要（最多 240 字）。也可以点跳过。", skipKeyboard("summary"));
+    return;
+  }
+  if (session.step === "summary") {
+    draft.summary = cleanText(text, 240);
+    await saveTelegramSession(env.DB, chatId, "nsfw", draft);
+    await askTelegramNsfw(env, chatId);
+    return;
+  }
+  if (session.step === "cover") {
+    await sendTelegramMessage(env, chatId, "这一步请直接发送图片作为封面，或点跳过。", skipKeyboard("cover"));
+    return;
+  }
+  if (session.step === "bodyImages") {
+    await sendTelegramMessage(env, chatId, "这一步请发送图片，或点“图片完成/跳过”进入正文。", bodyImagesKeyboard(draft));
+    return;
+  }
+  if (session.step === "content") {
+    const content = cleanText(text, MAX_POST_BYTES);
+    if (content.length < 10) {
+      await sendTelegramMessage(env, chatId, "正文至少 10 个字符，请重新发送。", cancelKeyboard());
+      return;
+    }
+    draft.content = content;
+    await saveTelegramSession(env.DB, chatId, "confirm", draft);
+    await sendTelegramMessage(env, chatId, telegramDraftPreview(draft), confirmKeyboard());
+  }
+}
+
+async function finalizeTelegramSubmission(env: Env, chatId: string, draft: TelegramDraft): Promise<void> {
+  try {
+    const retryAfter = await getCooldownSeconds(env.DB, "telegram_submission_chat", chatId);
+    if (retryAfter > 0) {
+      await sendTelegramMessage(env, chatId, `投稿冷却中，剩余 ${retryAfter} 秒。稍后再点确认提交即可。`, confirmKeyboard());
+      return;
+    }
+    const input = telegramDraftToSubmissionInput(draft);
+    const created = await createExternalSubmission(env.DB, input);
+    if (!created) {
+      await sendTelegramMessage(env, chatId, "投稿失败：没有可用的管理员作者账号。");
+      return;
+    }
+    await setCooldown(env.DB, "telegram_submission_chat", chatId, SUBMISSION_WRITE_COOLDOWN_SECONDS);
+    await deleteTelegramSession(env.DB, chatId);
+    const statusText = created.status === "published" ? "已公开" : "已进入审核队列";
+    const link = created.status === "published" ? `\n链接：https://nomtf.com/#/post/${encodeURIComponent(created.slug)}` : "";
+    await sendTelegramMessage(env, chatId, `投稿成功，${statusText}。${link}`, startKeyboard());
+    await sendTelegramMessage(env, chatId, created.status === "published"
+      ? "通知：你的投稿已经发布到网站。"
+      : "通知：你的投稿已经提交给管理员审核，审核通过后会在网站显示。");
+  } catch (error) {
+    await sendTelegramMessage(env, chatId, `投稿失败：${error instanceof Error ? error.message : "字段不完整"}`, cancelKeyboard());
+  }
+}
+
+function telegramDraftToSubmissionInput(draft: TelegramDraft): SubmissionInput {
+  const category = draft.category === "talk" ? "talk" : "rating";
+  const bodyImageKeys = cleanR2Keys(draft.bodyImageKeys ?? []);
+  const content = cleanText(appendImageKeysToContent(draft.content ?? "", bodyImageKeys), MAX_POST_BYTES);
+  const title = cleanText(draft.title, 120);
+  if (title.length < 2) throw new Error("标题太短");
+  if (content.length < 10) throw new Error("正文至少 10 个字符");
+
+  const isRating = category === "rating";
+  const finalRating = isRating ? cleanFinalRating(draft.finalRating) : "";
+  const ratingReason = isRating ? cleanText(draft.ratingReason, MAX_RATING_REASON_LENGTH) : "";
+  const twitterRef = isRating ? cleanText(draft.twitterRef, MAX_TWITTER_REF_LENGTH) : "";
+  const hazardLevel = isRating ? Number(draft.hazardLevel) : 1;
+  if (isRating && !isValidFinalRating(finalRating)) throw new Error("最终等级格式不正确");
+  if (isRating && (!ratingReason || !twitterRef)) throw new Error("评级原因和推特链接/用户名都必填");
+  if (isRating && (!Number.isInteger(hazardLevel) || hazardLevel < 1 || hazardLevel > 5)) throw new Error("危害等级需要是 1-5");
+
+  return {
+    title,
+    summary: cleanText(draft.summary, 240),
+    content,
+    category,
+    finalRating,
+    ratingReason,
+    twitterRef,
+    hazardLevel,
+    nsfw: Boolean(draft.nsfw),
+    requestedSlug: "",
+    coverKey: optionalR2Key(draft.coverKey),
+    tags: cleanTags(draft.tags ?? "")
+  };
+}
+
+async function startTelegramSubmission(env: Env, chatId: string): Promise<void> {
+  await saveTelegramSession(env.DB, chatId, "category", {});
+  await sendTelegramMessage(env, chatId, "开始投稿。先选择分类：", {
+    inline_keyboard: [
+      [{ text: "评级投稿", callback_data: "tg:cat:rating" }],
+      [{ text: "杂谈投稿", callback_data: "tg:cat:talk" }],
+      [{ text: "取消", callback_data: "tg:cancel" }]
+    ]
+  });
+}
+
+async function askTelegramHazardLevel(env: Env, chatId: string, draft: TelegramDraft): Promise<void> {
+  await saveTelegramSession(env.DB, chatId, "hazardLevel", draft);
+  await sendTelegramMessage(env, chatId, "请选择危害等级（1-5）：", {
+    inline_keyboard: [
+      [
+        { text: "1", callback_data: "tg:hazard:1" },
+        { text: "2", callback_data: "tg:hazard:2" },
+        { text: "3", callback_data: "tg:hazard:3" },
+        { text: "4", callback_data: "tg:hazard:4" },
+        { text: "5", callback_data: "tg:hazard:5" }
+      ],
+      [{ text: "取消", callback_data: "tg:cancel" }]
+    ]
+  });
+}
+
+async function askTelegramNsfw(env: Env, chatId: string): Promise<void> {
+  await sendTelegramMessage(env, chatId, "是否标记 NSFW / 激烈表达提示？", {
+    inline_keyboard: [
+      [
+        { text: "是", callback_data: "tg:nsfw:1" },
+        { text: "否", callback_data: "tg:nsfw:0" }
+      ],
+      [{ text: "取消", callback_data: "tg:cancel" }]
+    ]
+  });
+}
+
+async function uploadTelegramPhoto(env: Env, photos: TelegramPhotoSize[], chatId: string) {
+  const photo = photos.slice().sort((a, b) => Number(b.file_size ?? 0) - Number(a.file_size ?? 0))[0];
+  if (!photo?.file_id) throw new Error("没有收到可用图片");
+  if (Number(photo.file_size ?? 0) > MAX_IMAGE_BYTES) throw new Error("图片不能超过 15MB");
+  const file = await telegramApi<{ file_path?: string; file_size?: number }>(env, "getFile", { file_id: photo.file_id });
+  if (Number(file.file_size ?? photo.file_size ?? 0) > MAX_IMAGE_BYTES) throw new Error("图片不能超过 15MB");
+  if (!file.file_path) throw new Error("Telegram 图片路径为空");
+  const token = getTelegramBotToken(env);
+  const response = await fetch(`${TELEGRAM_API_BASE}/file/bot${token}/${file.file_path}`);
+  if (!response.ok) throw new Error("下载 Telegram 图片失败");
+  const bytes = await response.arrayBuffer();
+  return storeImageBytes(env, bytes, file.file_path, response.headers.get("Content-Type") ?? "", `telegram:${chatId}`);
+}
+
+async function getTelegramSession(db: D1Database, chatId: string): Promise<TelegramSession | null> {
+  const row = await db.prepare("SELECT chat_id, step, draft_json FROM telegram_sessions WHERE chat_id = ?")
+    .bind(chatId)
+    .first<{ chat_id: string; step: string; draft_json: string }>();
+  if (!row) return null;
+  try {
+    return {
+      chatId: row.chat_id,
+      step: cleanTelegramStep(row.step),
+      draft: JSON.parse(row.draft_json || "{}") as TelegramDraft
+    };
+  } catch {
+    return { chatId: row.chat_id, step: "category", draft: {} };
+  }
+}
+
+async function saveTelegramSession(db: D1Database, chatId: string, step: TelegramStep, draft: TelegramDraft): Promise<void> {
+  const now = nowIso();
+  await db.prepare(`
+    INSERT INTO telegram_sessions (chat_id, step, draft_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(chat_id)
+    DO UPDATE SET step = excluded.step, draft_json = excluded.draft_json, updated_at = excluded.updated_at
+  `).bind(chatId, step, JSON.stringify(draft), now, now).run();
+}
+
+async function deleteTelegramSession(db: D1Database, chatId: string): Promise<void> {
+  await db.prepare("DELETE FROM telegram_sessions WHERE chat_id = ?").bind(chatId).run();
+}
+
+function cleanTelegramStep(value: unknown): TelegramStep {
+  const step = String(value ?? "");
+  return ["category", "title", "finalRating", "hazardLevel", "ratingReason", "twitterRef", "tags", "summary", "nsfw", "cover", "bodyImages", "content", "confirm"].includes(step)
+    ? step as TelegramStep
+    : "category";
+}
+
+function telegramDraftPreview(draft: TelegramDraft): string {
+  const category = draft.category === "talk" ? "talk" : "rating";
+  const lines = [
+    "请确认投稿：",
+    `分类：${categoryTextForTelegram(category)}`,
+    `标题：${draft.title ?? ""}`,
+    `标签：${draft.tags || "无"}`,
+    `摘要：${draft.summary || "无"}`,
+    `NSFW：${draft.nsfw ? "是" : "否"}`,
+    `封面：${draft.coverKey ? "已上传" : "无"}`,
+    `正文图片：${(draft.bodyImageKeys ?? []).length} 张`
+  ];
+  if (category === "rating") {
+    lines.splice(3, 0, `最终等级：${draft.finalRating ?? ""}`, `危害等级：${draft.hazardLevel ?? ""}`, `评级原因：${draft.ratingReason ?? ""}`, `推特：${draft.twitterRef ?? ""}`);
+  }
+  lines.push("", "确认后会提交到网站。评级投稿进入审核；杂谈会直接公开。");
+  return lines.join("\n");
+}
+
+function startKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: "开始投稿", callback_data: "tg:new" }],
+      [{ text: "打开网站", url: "https://nomtf.com/" }]
+    ]
+  };
+}
+
+function cancelKeyboard() {
+  return { inline_keyboard: [[{ text: "取消", callback_data: "tg:cancel" }]] };
+}
+
+function skipKeyboard(kind: "tags" | "summary" | "cover") {
+  return { inline_keyboard: [[{ text: "跳过", callback_data: `tg:skip:${kind}` }], [{ text: "取消", callback_data: "tg:cancel" }]] };
+}
+
+function bodyImagesKeyboard(draft: TelegramDraft) {
+  const count = (draft.bodyImageKeys ?? []).length;
+  return {
+    inline_keyboard: [
+      [{ text: count ? `图片完成（已收 ${count} 张）` : "跳过正文图片", callback_data: count ? "tg:done:bodyImages" : "tg:skip:bodyImages" }],
+      [{ text: "取消", callback_data: "tg:cancel" }]
+    ]
+  };
+}
+
+function confirmKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: "确认提交", callback_data: "tg:confirm" }],
+      [{ text: "取消", callback_data: "tg:cancel" }]
+    ]
+  };
+}
+
+async function sendTelegramMessage(env: Env, chatId: string, text: string, replyMarkup?: unknown): Promise<void> {
+  await telegramApi(env, "sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, 3900),
+    reply_markup: replyMarkup
+  });
+}
+
+async function answerTelegramCallback(env: Env, callbackQueryId: string): Promise<void> {
+  await telegramApi(env, "answerCallbackQuery", { callback_query_id: callbackQueryId });
+}
+
+async function telegramApi<T = unknown>(env: Env, method: string, payload: Record<string, unknown>): Promise<T> {
+  const token = getTelegramBotToken(env);
+  if (!token) throw new Error("TELEGRAM_BOT_TOKEN 未配置");
+  const response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({})) as { ok?: boolean; result?: T; description?: string };
+  if (!response.ok || data.ok !== true) {
+    throw new Error(data.description || `Telegram API ${method} 调用失败`);
+  }
+  return data.result as T;
+}
+
+function telegramChatId(message: TelegramMessage | undefined): string {
+  return message?.chat?.id === undefined ? "" : String(message.chat.id);
+}
+
+function cleanTelegramText(value: string): string {
+  return String(value ?? "").trim();
+}
+
+function isSkipText(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  return text === "/skip" || text === "跳过" || text === "skip" || text === "/done" || text === "完成";
+}
+
+function categoryTextForTelegram(category: Exclude<PostCategory, "about">): string {
+  return category === "talk" ? "杂谈投稿" : "评级投稿";
+}
+
 function renderMarkdownBackup(rows: Record<string, unknown>[]): string {
   const lines = [
     "# NoMTF 文章干备份",
@@ -2083,6 +2789,14 @@ function getSessionSecret(env: Env): string {
 
 function getSubmissionApiKey(env: Env): string {
   return String((env as Env & { SUBMISSION_API_KEY?: string }).SUBMISSION_API_KEY ?? "");
+}
+
+function getTelegramBotToken(env: Env): string {
+  return String((env as Env & { TELEGRAM_BOT_TOKEN?: string }).TELEGRAM_BOT_TOKEN ?? "");
+}
+
+function getTelegramWebhookSecret(env: Env): string {
+  return String((env as Env & { TELEGRAM_WEBHOOK_SECRET?: string }).TELEGRAM_WEBHOOK_SECRET ?? "");
 }
 
 function isHttps(c: AppContext): boolean {

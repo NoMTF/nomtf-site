@@ -1,6 +1,6 @@
 # NoMTF 投稿 API
 
-投稿 API 用于从外部脚本提交文字稿件，不负责上传图片。图片请继续走站内上传或后台编辑；正文里已有的图片链接会在 Markdown 备份里转换成文件名占位。
+投稿 API 用于从外部脚本提交稿件，支持先上传图片，再把图片 key 放进投稿 JSON。正文里已有的站内图片链接会在 Markdown 备份里转换成文件名占位。
 
 ## 开启方式
 
@@ -13,6 +13,30 @@ npx wrangler secret put SUBMISSION_API_KEY
 未设置 `SUBMISSION_API_KEY` 时，接口会返回 `503`，避免裸奔开放投稿。
 
 ## 接口
+
+### 上传图片
+
+```http
+POST /api/submissions/media
+X-NoMTF-Submit-Key: <SUBMISSION_API_KEY>
+Content-Type: multipart/form-data
+```
+
+字段：
+
+- `file`：JPG、PNG、GIF、WebP 或 AVIF，最大 15MB。
+
+返回：
+
+```json
+{
+  "ok": true,
+  "key": "uploads/2026-05-04/xxx.jpg",
+  "url": "/media/uploads/2026-05-04/xxx.jpg"
+}
+```
+
+### 创建投稿
 
 ```http
 POST /api/submissions
@@ -40,6 +64,8 @@ Authorization: Bearer <SUBMISSION_API_KEY>
   "category": "rating",
   "tags": "标签1, 标签2",
   "slug": "optional-custom-slug",
+  "coverKey": "上传图片返回的 key，可选，仅 1 张封面",
+  "bodyImageKeys": ["上传图片返回的 key，最多 10 张，会追加到正文末尾"],
   "nsfw": false
 }
 ```
@@ -65,5 +91,18 @@ Authorization: Bearer <SUBMISSION_API_KEY>
 ## 限制
 
 - 每个 IP 每分钟最多 20 次投稿 API 调用。
+- 创建投稿成功后，同一 IP 30 秒内不能再创建下一篇；返回 `429` 时会带 `Retry-After`。
+- 图片上传接口每个 IP 10 分钟最多 60 次。
 - 管理员后台仍可审核、编辑、置顶或删除 API 投稿。
 - 请不要把 `SUBMISSION_API_KEY` 放进浏览器前端代码。
+
+## Telegram Bot
+
+机器人走 `/api/telegram/webhook`，需要设置：
+
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+```
+
+Webhook 需要带 Telegram 的 `secret_token`，机器人会引导用户逐步投稿，支持封面图和最多 10 张正文图片。投稿成功后会额外发送通知；30 秒投稿冷却未结束时会提示剩余秒数。

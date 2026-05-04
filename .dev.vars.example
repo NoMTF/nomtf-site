@@ -1,2 +1,5 @@
 SESSION_SECRET=replace-with-at-least-32-random-characters
 ADMIN_INVITE_CODE=replace-with-a-private-admin-code
+SUBMISSION_API_KEY=replace-with-a-private-submission-api-key
+TELEGRAM_BOT_TOKEN=replace-with-telegram-bot-token
+TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-webhook-secret
