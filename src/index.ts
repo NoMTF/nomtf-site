@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { ASSET_VERSION, SITE_DESCRIPTION, appScript, renderBlockedPage, renderPage, styles } from "./ui";
+import { ASSET_VERSION, SITE_DESCRIPTION, SITE_ORIGIN, appScript, renderBlockedPage, renderPage, styles } from "./ui";
 
 type Role = "user" | "admin";
 type UserStatus = "active" | "muted" | "banned";
@@ -167,6 +167,7 @@ const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
 const LOGIN_IP_LOCK_THRESHOLD = 20;
 const MAX_SEARCH_QUERY_LENGTH = 80;
+const MAX_SEARCH_TERMS = 8;
 const MAX_FINAL_RATING_LENGTH = 3;
 const MAX_RATING_REASON_LENGTH = 240;
 const MAX_TWITTER_REF_LENGTH = 160;
@@ -256,6 +257,50 @@ app.get("/site.webmanifest", (c) => {
     headers: {
       "Content-Type": "application/manifest+json; charset=utf-8",
       "Cache-Control": "public, max-age=3600"
+    }
+  });
+});
+
+app.get("/robots.txt", () => {
+  return new Response(`User-agent: *
+Allow: /
+Sitemap: ${SITE_ORIGIN}/sitemap.xml
+`, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=3600"
+    }
+  });
+});
+
+app.get("/sitemap.xml", async (c) => {
+  const rows = await c.env.DB.prepare(`
+    SELECT slug, updated_at, created_at
+    FROM posts
+    WHERE status = 'published'
+    ORDER BY updated_at DESC
+    LIMIT 5000
+  `).all<{ slug: string; updated_at: string; created_at: string }>();
+  const urls = [
+    { loc: `${SITE_ORIGIN}/`, lastmod: nowIso() },
+    ...(rows.results ?? []).map((row) => ({
+      loc: postPublicUrl(row.slug),
+      lastmod: row.updated_at || row.created_at || nowIso()
+    }))
+  ];
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.map((item) => `  <url>
+    <loc>${xmlEscape(item.loc)}</loc>
+    <lastmod>${xmlEscape(item.lastmod.slice(0, 10))}</lastmod>
+    <changefreq>daily</changefreq>
+  </url>`).join("\n")}
+</urlset>
+`;
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      "Cache-Control": "public, max-age=1800"
     }
   });
 });
@@ -493,9 +538,11 @@ app.get("/api/posts", async (c) => {
   });
   if (limited) return limited;
 
-  const q = String(c.req.query("q") ?? "").trim();
+  const q = normalizeSearchQuery(c.req.query("q"));
   const tag = String(c.req.query("tag") ?? "").trim();
-  const category = cleanPostCategory(c.req.query("category"), "rating");
+  const rawCategory = String(c.req.query("category") ?? "").trim();
+  const searchPlan = buildPostSearchPlan(q);
+  const category = rawCategory === "all" || (searchPlan && !rawCategory) ? "" : cleanPostCategory(rawCategory, "rating");
   const level = Number(c.req.query("level") ?? 0);
   const page = Math.max(1, Number(c.req.query("page") ?? 1));
   const limit = Math.min(30, Math.max(1, Number(c.req.query("limit") ?? 12)));
@@ -511,12 +558,14 @@ app.get("/api/posts", async (c) => {
   }
 
   const conditions = ["p.status = 'published'"];
-  const params: Array<string | number> = [category];
-  conditions.push("p.category = ?");
-  if (q) {
-    const like = `%${q}%`;
-    conditions.push("(p.title LIKE ? OR p.summary LIKE ? OR p.content LIKE ? OR p.final_rating LIKE ? OR p.rating_reason LIKE ? OR p.twitter_ref LIKE ?)");
-    params.push(like, like, like, like, like, like);
+  const params: Array<string | number> = [];
+  if (category) {
+    conditions.push("p.category = ?");
+    params.push(category);
+  }
+  if (searchPlan) {
+    conditions.push(searchPlan.whereSql);
+    params.push(...searchPlan.whereParams);
   }
   if (category === "rating" && level >= 1 && level <= 5) {
     conditions.push("p.hazard_level = ?");
@@ -534,6 +583,7 @@ app.get("/api/posts", async (c) => {
       p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
+      ${searchPlan ? `${searchPlan.scoreSql} AS search_score,` : ""}
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
       COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status = 'published'), 0) AS comment_count,
       EXISTS(SELECT 1 FROM post_likes mine WHERE mine.post_id = p.id AND mine.subject_type = ? AND mine.subject_id = ?) AS liked_by_me,
@@ -541,11 +591,11 @@ app.get("/api/posts", async (c) => {
     FROM posts p
     JOIN users u ON u.id = p.author_id
     WHERE ${conditions.join(" AND ")}
-    ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, p.created_at DESC
+    ORDER BY ${searchPlan ? "search_score DESC," : ""} CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, p.created_at DESC
     LIMIT ? OFFSET ?
   `;
   const result = await c.env.DB.prepare(sql)
-    .bind(subjectType, subjectId, ...params, limit, offset)
+    .bind(...(searchPlan?.scoreParams ?? []), subjectType, subjectId, ...params, limit, offset)
     .all<Record<string, unknown>>();
 
   return c.json({
@@ -1374,6 +1424,43 @@ app.patch("/api/admin/site-settings", async (c) => {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).bind(JSON.stringify(ui), nowIso()).run();
   return c.json({ ok: true, ui });
+});
+
+app.get("/post/:slug", async (c) => {
+  const slug = c.req.param("slug");
+  const row = await c.env.DB.prepare(`
+    SELECT p.title, p.slug, p.summary, p.content, p.cover_key,
+      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name
+    FROM posts p
+    JOIN users u ON u.id = p.author_id
+    WHERE p.slug = ? AND p.status = 'published'
+  `).bind(slug).first<Record<string, unknown>>();
+  if (!row) {
+    return new Response(renderPage({
+      title: "帖子不存在 - NoMTF 不药娘网",
+      description: SITE_DESCRIPTION,
+      canonical: `${SITE_ORIGIN}/`
+    }), {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store"
+      }
+    });
+  }
+  const coverKey = String(row.cover_key ?? "");
+  return new Response(renderPage({
+    title: `${String(row.title)} - NoMTF 不药娘网`,
+    description: seoDescription(row.summary || row.content),
+    canonical: postPublicUrl(String(row.slug)),
+    image: coverKey ? `${SITE_ORIGIN}/media/${coverKey}` : undefined,
+    type: "article"
+  }), {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=300"
+    }
+  });
 });
 
 app.get("*", (c) => {
@@ -2682,6 +2769,23 @@ function markdownLine(value: unknown): string {
   return String(value ?? "").replace(/\r?\n/g, " ").trim();
 }
 
+function postPublicUrl(slug: string): string {
+  return `${SITE_ORIGIN}/post/${encodeURIComponent(slug)}`;
+}
+
+function seoDescription(value: unknown): string {
+  const text = String(value ?? "")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
+    .replace(/[*_`>#\[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleanText(text || SITE_DESCRIPTION, 150);
+}
+
+function xmlEscape(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[char] || char);
+}
+
 function normalizePostRow(row: Record<string, unknown>) {
   const coverKey = typeof row.cover_key === "string" && row.cover_key ? row.cover_key : "";
   return {
@@ -2913,6 +3017,132 @@ function normalizeSearchQuery(value: unknown): string {
 
 function searchQueryKey(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function buildPostSearchPlan(query: string): { whereSql: string; whereParams: Array<string | number>; scoreSql: string; scoreParams: Array<string | number> } | null {
+  const normalized = normalizeSearchQuery(query);
+  if (!normalized) return null;
+  const terms = searchTerms(normalized);
+  if (!terms.length) return null;
+  const whereParts: string[] = [];
+  const whereParams: Array<string | number> = [];
+  for (const term of terms) {
+    const like = searchLike(term);
+    const slugLike = searchLike(slugify(term) || term);
+    whereParts.push(`(
+      p.title LIKE ? ESCAPE '\\'
+      OR p.slug LIKE ? ESCAPE '\\'
+      OR p.summary LIKE ? ESCAPE '\\'
+      OR p.content LIKE ? ESCAPE '\\'
+      OR p.final_rating LIKE ? ESCAPE '\\'
+      OR p.rating_reason LIKE ? ESCAPE '\\'
+      OR p.twitter_ref LIKE ? ESCAPE '\\'
+      OR p.submitter_name LIKE ? ESCAPE '\\'
+      OR u.username LIKE ? ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1 FROM post_tags search_pt
+        JOIN tags search_t ON search_t.id = search_pt.tag_id
+        WHERE search_pt.post_id = p.id
+          AND (search_t.name LIKE ? ESCAPE '\\' OR search_t.slug LIKE ? ESCAPE '\\')
+      )
+    )`);
+    whereParams.push(like, slugLike, like, like, like, like, like, like, like, like, slugLike);
+  }
+
+  const scoreParts: string[] = [];
+  const scoreParams: Array<string | number> = [];
+  const exactLike = searchLike(normalized);
+  const prefixLike = `${escapeLike(normalized)}%`;
+  const exactSlug = slugify(normalized);
+  const exactSlugLike = searchLike(exactSlug || normalized);
+  scoreParts.push("CASE WHEN p.title = ? COLLATE NOCASE THEN 1200 ELSE 0 END");
+  scoreParams.push(normalized);
+  scoreParts.push("CASE WHEN p.title LIKE ? ESCAPE '\\' THEN 900 ELSE 0 END");
+  scoreParams.push(prefixLike);
+  scoreParts.push("CASE WHEN p.title LIKE ? ESCAPE '\\' THEN 720 ELSE 0 END");
+  scoreParams.push(exactLike);
+  scoreParts.push("CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 650 ELSE 0 END");
+  scoreParams.push(exactSlugLike);
+  scoreParts.push(`CASE WHEN EXISTS (
+    SELECT 1 FROM post_tags score_exact_pt
+    JOIN tags score_exact_t ON score_exact_t.id = score_exact_pt.tag_id
+    WHERE score_exact_pt.post_id = p.id
+      AND (score_exact_t.name = ? COLLATE NOCASE OR score_exact_t.slug = ?)
+  ) THEN 620 ELSE 0 END`);
+  scoreParams.push(normalized, exactSlug);
+  scoreParts.push("CASE WHEN p.submitter_name LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\' THEN 360 ELSE 0 END");
+  scoreParams.push(exactLike, exactLike);
+  scoreParts.push("CASE WHEN p.twitter_ref LIKE ? ESCAPE '\\' THEN 320 ELSE 0 END");
+  scoreParams.push(exactLike);
+  scoreParts.push("CASE WHEN p.summary LIKE ? ESCAPE '\\' THEN 260 ELSE 0 END");
+  scoreParams.push(exactLike);
+  scoreParts.push("CASE WHEN p.rating_reason LIKE ? ESCAPE '\\' THEN 220 ELSE 0 END");
+  scoreParams.push(exactLike);
+  scoreParts.push("CASE WHEN p.content LIKE ? ESCAPE '\\' THEN 120 ELSE 0 END");
+  scoreParams.push(exactLike);
+  scoreParts.push("CASE WHEN p.final_rating = ? COLLATE NOCASE THEN 180 ELSE 0 END");
+  scoreParams.push(normalized);
+
+  for (const term of terms) {
+    const like = searchLike(term);
+    const slugLike = searchLike(slugify(term) || term);
+    scoreParts.push("CASE WHEN p.title LIKE ? ESCAPE '\\' THEN 120 ELSE 0 END");
+    scoreParams.push(like);
+    scoreParts.push(`CASE WHEN EXISTS (
+      SELECT 1 FROM post_tags score_term_pt
+      JOIN tags score_term_t ON score_term_t.id = score_term_pt.tag_id
+      WHERE score_term_pt.post_id = p.id
+        AND (score_term_t.name LIKE ? ESCAPE '\\' OR score_term_t.slug LIKE ? ESCAPE '\\')
+    ) THEN 110 ELSE 0 END`);
+    scoreParams.push(like, slugLike);
+    scoreParts.push("CASE WHEN p.submitter_name LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\' THEN 70 ELSE 0 END");
+    scoreParams.push(like, like);
+    scoreParts.push("CASE WHEN p.twitter_ref LIKE ? ESCAPE '\\' THEN 65 ELSE 0 END");
+    scoreParams.push(like);
+    scoreParts.push("CASE WHEN p.summary LIKE ? ESCAPE '\\' THEN 55 ELSE 0 END");
+    scoreParams.push(like);
+    scoreParts.push("CASE WHEN p.rating_reason LIKE ? ESCAPE '\\' THEN 50 ELSE 0 END");
+    scoreParams.push(like);
+    scoreParts.push("CASE WHEN p.content LIKE ? ESCAPE '\\' THEN 18 ELSE 0 END");
+    scoreParams.push(like);
+  }
+
+  scoreParts.push("MIN(COALESCE(p.view_count, 0), 500) * 0.08");
+  scoreParts.push("COALESCE((SELECT COUNT(*) FROM post_likes score_like WHERE score_like.post_id = p.id), 0) * 3");
+  scoreParts.push("COALESCE((SELECT COUNT(*) FROM comments score_comment WHERE score_comment.post_id = p.id AND score_comment.status = 'published'), 0) * 2");
+  return {
+    whereSql: `(${whereParts.join(" AND ")})`,
+    whereParams,
+    scoreSql: `(${scoreParts.join(" + ")})`,
+    scoreParams
+  };
+}
+
+function searchTerms(query: string): string[] {
+  const normalized = normalizeSearchQuery(query).normalize("NFKC");
+  const parts = normalized
+    .split(/[\s,，、。.!?！？;；:：#@/\\|()[\]{}"'“”‘’<>《》+=~`]+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const source = parts.length ? parts : [normalized];
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const item of source) {
+    const key = item.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    terms.push(item.slice(0, MAX_SEARCH_QUERY_LENGTH));
+    if (terms.length >= MAX_SEARCH_TERMS) break;
+  }
+  return terms;
+}
+
+function searchLike(value: string): string {
+  return `%${escapeLike(value)}%`;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
 function cleanPostCategory(value: unknown, fallback: PostCategory): PostCategory {

@@ -2,31 +2,49 @@ export const ASSET_VERSION = "20260504-search-admin-edit";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
-export function renderPage(): string {
+type PageMeta = {
+  title?: string;
+  description?: string;
+  canonical?: string;
+  image?: string;
+  type?: string;
+};
+
+export function renderPage(meta: PageMeta = {}): string {
+  const title = escapeMeta(meta.title || "NoMTF 不药娘网");
+  const description = escapeMeta(meta.description || SITE_DESCRIPTION);
+  const canonical = escapeMeta(meta.canonical || `${SITE_ORIGIN}/`);
+  const image = escapeMeta(meta.image || `${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}`);
+  const type = escapeMeta(meta.type || "website");
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NoMTF 不药娘网</title>
-    <meta name="description" content="${SITE_DESCRIPTION}">
+    <title>${title}</title>
+    <meta name="description" content="${description}">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="${SITE_ORIGIN}/">
+    <link rel="canonical" href="${canonical}">
     <link rel="icon" type="image/png" sizes="48x48" href="/media/site/search-icon-48.png?v=${ASSET_VERSION}">
     <link rel="icon" type="image/png" sizes="96x96" href="/media/site/search-icon-96.png?v=${ASSET_VERSION}">
     <link rel="apple-touch-icon" sizes="180x180" href="/media/site/search-icon-180.png?v=${ASSET_VERSION}">
     <link rel="manifest" href="/site.webmanifest?v=${ASSET_VERSION}">
     <meta property="og:site_name" content="NoMTF 不药娘网">
-    <meta property="og:title" content="NoMTF 不药娘网">
-    <meta property="og:description" content="${SITE_DESCRIPTION}">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="${SITE_ORIGIN}/">
-    <meta property="og:image" content="${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}">
+    <meta property="og:title" content="${title}">
+    <meta property="og:description" content="${description}">
+    <meta property="og:type" content="${type}">
+    <meta property="og:url" content="${canonical}">
+    <meta property="og:image" content="${image}">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="NoMTF 不药娘网">
-    <meta name="twitter:description" content="${SITE_DESCRIPTION}">
-    <meta name="twitter:image" content="${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}">
+    <meta name="twitter:title" content="${title}">
+    <meta name="twitter:description" content="${description}">
+    <meta name="twitter:image" content="${image}">
     <link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}">
+    <script>
+      if (!location.hash && location.pathname.indexOf("/post/") === 0) {
+        location.replace("/#/post/" + encodeURIComponent(decodeURIComponent(location.pathname.slice(6))));
+      }
+    </script>
     <script src="/assets/app.js?v=${ASSET_VERSION}" defer></script>
   </head>
   <body>
@@ -38,6 +56,10 @@ export function renderPage(): string {
     </div>
   </body>
 </html>`;
+}
+
+function escapeMeta(value: string): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] || char);
 }
 
 export function renderBlockedPage(): string {
@@ -2317,10 +2339,15 @@ export const appScript = String.raw`
 
   async function loadPosts() {
     var params = new URLSearchParams();
-    if (state.filters.q) params.set("q", state.filters.q);
+    var searching = Boolean(state.filters.q);
+    if (searching) params.set("q", state.filters.q);
     var category = state.filters.category || "rating";
-    if (category) params.set("category", category);
-    if (category === "rating" && state.filters.level) params.set("level", state.filters.level);
+    if (searching) {
+      params.set("category", "all");
+    } else if (category) {
+      params.set("category", category);
+    }
+    if (!searching && category === "rating" && state.filters.level) params.set("level", state.filters.level);
     if (state.filters.tag) params.set("tag", state.filters.tag);
     var data = await api("/api/posts?" + params.toString());
     state.posts = data.posts || [];
