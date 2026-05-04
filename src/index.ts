@@ -197,7 +197,7 @@ app.use("*", enforceHttps);
 app.use("*", applySecurityHeaders);
 app.use("*", bindRequestContext);
 app.use("/api/*", async (c, next) => {
-  if (!isSafeMethod(c.req.method) && !isSameOrigin(c)) {
+  if (!isSafeMethod(c.req.method) && !isSameOrigin(c) && !isExternalWebhookRequest(c)) {
     return c.json({ error: "跨站请求被拒绝" }, 403);
   }
   if (!isSafeMethod(c.req.method)) {
@@ -819,6 +819,12 @@ app.post("/api/telegram/webhook", async (c) => {
   if (!safeEqualText(provided, secret)) return c.json({ error: "Telegram webhook secret 不正确" }, 403);
 
   const update = await readJson(c) as TelegramUpdate;
+  console.log(JSON.stringify({
+    level: "info",
+    message: "telegram webhook received",
+    updateId: update.update_id,
+    kind: update.callback_query ? "callback_query" : update.message ? "message" : "other"
+  }));
   c.executionCtx.waitUntil(handleTelegramUpdate(c.env, update).catch((error) => {
     console.error(JSON.stringify({ level: "error", message: "telegram webhook failed", error: String(error) }));
   }));
@@ -2536,6 +2542,13 @@ async function telegramApi<T = unknown>(env: Env, method: string, payload: Recor
   });
   const data = await response.json().catch(() => ({})) as { ok?: boolean; result?: T; description?: string };
   if (!response.ok || data.ok !== true) {
+    console.error(JSON.stringify({
+      level: "error",
+      message: "telegram api failed",
+      method,
+      status: response.status,
+      description: data.description ?? ""
+    }));
     throw new Error(data.description || `Telegram API ${method} 调用失败`);
   }
   return data.result as T;
@@ -2819,6 +2832,10 @@ function isSameOrigin(c: AppContext): boolean {
   const origin = c.req.header("Origin");
   if (!origin) return true;
   return origin === new URL(c.req.url).origin;
+}
+
+function isExternalWebhookRequest(c: AppContext): boolean {
+  return new URL(c.req.url).pathname === "/api/telegram/webhook";
 }
 
 function nowIso(): string {
