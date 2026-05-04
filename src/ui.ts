@@ -27,6 +27,7 @@ export function renderPage(meta: PageMeta = {}): string {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${title}</title>
     <meta name="description" content="${description}">
+    <meta name="keywords" content="NoMTF, nomtf, nomtf.com, 不药娘网, 不药娘, 独立评级网站, 娱乐评级">
     <meta name="robots" content="index,follow">
     <link rel="canonical" href="${canonical}">
     <link rel="icon" type="image/png" sizes="48x48" href="/media/site/search-icon-48.png?v=${ASSET_VERSION}">
@@ -60,8 +61,9 @@ export function renderPage(meta: PageMeta = {}): string {
 
 function defaultStaticHtml(): string {
   return '<section class="page-section detail-article">' +
-    '<h1>NoMTF 不药娘网</h1>' +
-    '<p>不药娘网-一个独立的评级网站 切勿当真。这里存放娱乐性质的评级、杂谈和站点说明。</p>' +
+    '<h1>NoMTF 不药娘网 - nomtf.com</h1>' +
+    '<p>NoMTF 不药娘网（nomtf.com）是一个独立的娱乐评级网站，中文名为不药娘网，内容切勿当真。</p>' +
+    '<p>网站关键词：NoMTF、nomtf、不药娘网、不药娘、独立评级网站、娱乐评级。</p>' +
     '<p>本站内容仅供娱乐和讨论，不应被当作事实判断或现实行动依据。</p>' +
   '</section>';
 }
