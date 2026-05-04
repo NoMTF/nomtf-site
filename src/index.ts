@@ -52,6 +52,14 @@ type Variables = {
   permission: PermissionLevel;
   ipHash: string;
   ipAddress: string;
+  ipLocation: IpLocation;
+};
+
+type IpLocation = {
+  country: string;
+  region: string;
+  city: string;
+  colo: string;
 };
 
 type RateLimitRule = {
@@ -428,6 +436,7 @@ app.post("/api/register", async (c) => {
     return c.json({ error: "昵称或邮箱已经被占用" }, 409);
   }
 
+  await recordUserIpEvent(c, userId);
   await setCooldown(c.env.DB, "register_success_ip", ipSubject(c), REGISTER_IP_COOLDOWN_SECONDS);
   await createSession(c, userId);
   return c.json({ ok: true, user: await getUserById(c.env.DB, userId) }, 201);
@@ -474,6 +483,7 @@ app.post("/api/login", async (c) => {
   await c.env.DB.prepare("UPDATE users SET last_login_at = ?, last_ip = ?, last_ip_hash = ?, last_seen_at = ?, updated_at = ? WHERE id = ?")
     .bind(loginAt, c.get("ipAddress"), c.get("ipHash"), loginAt, loginAt, user.id)
     .run();
+  await recordUserIpEvent(c, user.id);
   await createSession(c, user.id);
   const { password_hash: _, ...safeUser } = user;
   return c.json({ ok: true, user: safeUser });
@@ -1290,7 +1300,7 @@ app.get("/api/admin/users", async (c) => {
     ORDER BY created_at DESC
     LIMIT 100
   `).bind(nowIso()).all<Record<string, unknown>>();
-  return c.json({ users: result.results ?? [] });
+  return c.json({ users: await attachUserIpPreviews(c.env.DB, result.results ?? []) });
 });
 
 app.patch("/api/admin/users/:id", async (c) => {
@@ -1391,13 +1401,18 @@ app.post("/api/admin/users/:id/ban-ip", async (c) => {
     .bind(targetId)
     .first<{ id: string; username: string; last_ip: string | null; last_ip_hash: string | null }>();
   if (!target) return c.json({ error: "用户不存在" }, 404);
-  if (!target.last_ip_hash) return c.json({ error: "这个用户还没有记录到 IP" }, 400);
+  const ipRows = await c.env.DB.prepare("SELECT ip_hash, ip FROM user_ip_events WHERE user_id = ?")
+    .bind(target.id)
+    .all<{ ip_hash: string; ip: string }>();
+  const targets = uniqueIpBanTargets(ipRows.results ?? [], target.last_ip_hash, target.last_ip);
+  if (!targets.length) return c.json({ error: "这个用户还没有记录到 IP" }, 400);
   const now = nowIso();
-  await c.env.DB.prepare(`
-    INSERT INTO visitor_permissions (id, kind, subject, level, reason, expires_at, created_by, created_at)
-    VALUES (?, 'ip_hash', ?, 'banned', ?, NULL, ?, ?)
-  `).bind(crypto.randomUUID(), target.last_ip_hash, `一键 ban IP：${target.username} ${target.last_ip ?? ""}`.slice(0, 240), admin.id, now).run();
-  return c.json({ ok: true, ipHash: target.last_ip_hash });
+  const batch = targets.map((item) => c.env.DB.prepare(`
+      INSERT INTO visitor_permissions (id, kind, subject, level, reason, expires_at, created_by, created_at)
+      VALUES (?, 'ip_hash', ?, 'banned', ?, NULL, ?, ?)
+    `).bind(crypto.randomUUID(), item.ipHash, `一键 ban IP：${target.username} ${item.ip}`.slice(0, 240), admin.id, now));
+  await c.env.DB.batch(batch);
+  return c.json({ ok: true, banned: targets.length, ipHashes: targets.map((item) => item.ipHash) });
 });
 
 app.post("/api/admin/users/:id/revoke-sessions", async (c) => {
@@ -1566,6 +1581,7 @@ async function bindRequestContext(c: AppContext, next: Next) {
   const secret = getSessionSecret(c.env);
   const ip = clientIpFromRequest(c);
   const ipHash = ip ? await sha256Hex(`${secret}:${ip}`) : "";
+  const ipLocation = ipLocationFromRequest(c, ip);
   const token = getCookie(c, SESSION_COOKIE);
   const user = token ? await getUserBySession(c.env.DB, token) : null;
   const permission = await resolvePermission(c.env.DB, user, visitorId, ipHash);
@@ -1575,6 +1591,7 @@ async function bindRequestContext(c: AppContext, next: Next) {
   c.set("permission", permission);
   c.set("ipHash", ipHash);
   c.set("ipAddress", ip);
+  c.set("ipLocation", ipLocation);
   if (user) {
     c.executionCtx.waitUntil(updateUserPresence(c, user).catch((error) => {
       console.error(JSON.stringify({ level: "warn", message: "user presence update failed", error: String(error) }));
@@ -1604,6 +1621,101 @@ function clientIpFromRequest(c: AppContext): string {
     return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
   }
   return "";
+}
+
+function ipLocationFromRequest(c: AppContext, ip: string): IpLocation {
+  const cf = c.req.raw.cf as Record<string, unknown> | undefined;
+  const country = String(cf?.country ?? c.req.header("CF-IPCountry") ?? "").toUpperCase();
+  const region = cleanText(cf?.region, 80);
+  const city = cleanText(cf?.city, 80);
+  const colo = cleanText(cf?.colo, 20);
+  const fallback = fallbackIpLocation(ip);
+  return {
+    country: country || fallback.country,
+    region: region || fallback.region,
+    city: city || fallback.city,
+    colo: colo || fallback.colo
+  };
+}
+
+function fallbackIpLocation(ip: string): IpLocation {
+  if (/^147\.79\.59\./.test(ip)) return { country: "JP", region: "Tokyo", city: "Tokyo", colo: "" };
+  if (/^(14|27|36|39|42|49|58|59|60|61|101|103|106|110|111|112|113|114|115|116|117|118|119|120|121|122|123|124|125|139|140|150|171|175|180|182|183|202|203|210|211|218|219|220|221|222|223)\./.test(ip)) return { country: "CN", region: "", city: "", colo: "" };
+  if (/^(133|153|182|183|202|203|210|211)\./.test(ip)) return { country: "JP", region: "", city: "", colo: "" };
+  if (/^(3|4|8|12|13|15|16|17|18|20|23|24|32|34|35|38|40|44|47|52|54|63|64|65|66|67|68|69|70|71|72|73|74|75|76|96|97|98|99|100|104|107|108|128|129|130|131|132|134|135|136|137|138|142|143|144|146|147|148|149|152|155|156|157|158|159|160|161|162|163|164|165|166|167|168|169|170|172|173|174|184|192|198|199|204|205|206|207|208|209|216)\./.test(ip)) return { country: "US", region: "", city: "", colo: "" };
+  return { country: "", region: "", city: "", colo: "" };
+}
+
+function formatIpLocation(country: string, region: string, city: string, colo: string): string {
+  const countryName = countryNameZh(country);
+  const cityName = cityNameZh(city);
+  const regionName = cityName ? "" : regionNameZh(region);
+  const main = [countryName, regionName, cityName].filter(Boolean).join("");
+  return main || (colo ? `Cloudflare ${colo}` : "");
+}
+
+function countryNameZh(country: string): string {
+  const map: Record<string, string> = {
+    CN: "中国",
+    HK: "中国香港",
+    MO: "中国澳门",
+    TW: "中国台湾",
+    JP: "日本",
+    US: "美国",
+    SG: "新加坡",
+    KR: "韩国",
+    RU: "俄罗斯",
+    DE: "德国",
+    FR: "法国",
+    GB: "英国",
+    CA: "加拿大",
+    AU: "澳大利亚",
+    NL: "荷兰",
+    VN: "越南",
+    TH: "泰国",
+    MY: "马来西亚",
+    ID: "印度尼西亚",
+    PH: "菲律宾"
+  };
+  return map[country] ?? country;
+}
+
+function cityNameZh(city: string): string {
+  const key = city.trim().toLowerCase();
+  const map: Record<string, string> = {
+    tokyo: "东京",
+    osaka: "大阪",
+    "hong kong": "香港",
+    singapore: "新加坡",
+    seoul: "首尔",
+    beijing: "北京",
+    shanghai: "上海",
+    guangzhou: "广州",
+    shenzhen: "深圳",
+    hangzhou: "杭州",
+    chengdu: "成都",
+    wuhan: "武汉",
+    "new york": "纽约",
+    "los angeles": "洛杉矶",
+    "san francisco": "旧金山",
+    london: "伦敦",
+    paris: "巴黎",
+    frankfurt: "法兰克福",
+    sydney: "悉尼"
+  };
+  return map[key] ?? city.trim();
+}
+
+function regionNameZh(region: string): string {
+  const key = region.trim().toLowerCase();
+  const map: Record<string, string> = {
+    tokyo: "东京",
+    "tokyo prefecture": "东京",
+    california: "加利福尼亚",
+    "new york": "纽约",
+    "new south wales": "新南威尔士"
+  };
+  return map[key] ?? region.trim();
 }
 
 async function getUserBySession(db: D1Database, token: string): Promise<User | null> {
@@ -1704,6 +1816,114 @@ async function updateUserPresence(c: AppContext, user: User): Promise<void> {
   await c.env.DB.prepare("UPDATE users SET last_ip = ?, last_ip_hash = ?, last_seen_at = ? WHERE id = ?")
     .bind(ipAddress, ipHash, now, user.id)
     .run();
+  await recordUserIpEvent(c, user.id, now);
+}
+
+async function attachUserIpPreviews(db: D1Database, users: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  const ids = users.map((row) => String(row.id ?? "")).filter(Boolean);
+  if (!ids.length) return users;
+  const placeholders = ids.map(() => "?").join(",");
+  const result = await db.prepare(`
+    SELECT user_id, ip_hash, ip, country, region, city, colo, first_seen_at, last_seen_at, seen_count
+    FROM user_ip_events
+    WHERE user_id IN (${placeholders})
+    ORDER BY CASE WHEN country = 'CN' THEN 0 ELSE 1 END, last_seen_at DESC
+  `).bind(...ids).all<Record<string, unknown>>();
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const row of result.results ?? []) {
+    const userId = String(row.user_id ?? "");
+    const list = grouped.get(userId) ?? [];
+    list.push(row);
+    grouped.set(userId, list);
+  }
+  return users.map((user) => {
+    const list = grouped.get(String(user.id ?? "")) ?? [];
+    const previews = list.map(ipPreviewFromRow);
+    if (!previews.length && user.last_ip) {
+      previews.push(ipPreviewFromRow({
+        ip: user.last_ip,
+        ip_hash: user.last_ip_hash,
+        last_seen_at: user.last_seen_at,
+        seen_count: 1,
+        ...fallbackIpLocation(String(user.last_ip))
+      }));
+    }
+    previews.sort(compareIpPreview);
+    return {
+      ...user,
+      ip_previews: previews,
+      ip_preview: previews[0]?.label ?? (user.last_ip ? `${user.last_ip}` : "未记录")
+    };
+  });
+}
+
+function ipPreviewFromRow(row: Record<string, unknown>) {
+  const ip = String(row.ip ?? "");
+  const country = String(row.country ?? "").toUpperCase();
+  const region = String(row.region ?? "");
+  const city = String(row.city ?? "");
+  const location = formatIpLocation(country, region, city, String(row.colo ?? ""));
+  return {
+    ip,
+    ipHash: String(row.ip_hash ?? ""),
+    country,
+    region,
+    city,
+    location,
+    label: location ? `${ip}（${location}）` : ip || "未记录",
+    lastSeenAt: String(row.last_seen_at ?? ""),
+    firstSeenAt: String(row.first_seen_at ?? ""),
+    seenCount: Number(row.seen_count ?? 1)
+  };
+}
+
+function compareIpPreview(a: { country: string; lastSeenAt: string }, b: { country: string; lastSeenAt: string }): number {
+  const china = (a.country === "CN" ? 0 : 1) - (b.country === "CN" ? 0 : 1);
+  if (china !== 0) return china;
+  return b.lastSeenAt.localeCompare(a.lastSeenAt);
+}
+
+function uniqueIpBanTargets(rows: Array<{ ip_hash: string; ip: string }>, lastIpHash: string | null, lastIp: string | null) {
+  const seen = new Set<string>();
+  const targets: Array<{ ipHash: string; ip: string }> = [];
+  for (const row of rows) {
+    if (!row.ip_hash || seen.has(row.ip_hash)) continue;
+    seen.add(row.ip_hash);
+    targets.push({ ipHash: row.ip_hash, ip: row.ip || "" });
+  }
+  if (lastIpHash && !seen.has(lastIpHash)) {
+    targets.push({ ipHash: lastIpHash, ip: lastIp ?? "" });
+  }
+  return targets;
+}
+
+async function recordUserIpEvent(c: AppContext, userId: string, timestamp = nowIso()): Promise<void> {
+  const ipHash = c.get("ipHash");
+  if (!ipHash) return;
+  const location = c.get("ipLocation");
+  await c.env.DB.prepare(`
+    INSERT INTO user_ip_events (user_id, ip_hash, ip, country, region, city, colo, first_seen_at, last_seen_at, seen_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(user_id, ip_hash)
+    DO UPDATE SET
+      ip = excluded.ip,
+      country = CASE WHEN excluded.country != '' THEN excluded.country ELSE user_ip_events.country END,
+      region = CASE WHEN excluded.region != '' THEN excluded.region ELSE user_ip_events.region END,
+      city = CASE WHEN excluded.city != '' THEN excluded.city ELSE user_ip_events.city END,
+      colo = CASE WHEN excluded.colo != '' THEN excluded.colo ELSE user_ip_events.colo END,
+      last_seen_at = excluded.last_seen_at,
+      seen_count = user_ip_events.seen_count + 1
+  `).bind(
+    userId,
+    ipHash,
+    c.get("ipAddress"),
+    location.country,
+    location.region,
+    location.city,
+    location.colo,
+    timestamp,
+    timestamp
+  ).run();
 }
 
 function requireActiveUser(c: AppContext): User | Response {

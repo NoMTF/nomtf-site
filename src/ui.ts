@@ -1336,7 +1336,7 @@ a { color: inherit; }
 }
 
 .table-row.users {
-  grid-template-columns: minmax(150px, 1fr) minmax(170px, 1fr) minmax(150px, 1fr) 96px 110px auto;
+  grid-template-columns: minmax(150px, 1fr) minmax(240px, 1.35fr) minmax(90px, .55fr) 96px 110px auto;
 }
 
 .admin-user-main,
@@ -1357,6 +1357,21 @@ a { color: inherit; }
 .admin-ip-cell code {
   font-size: 12px;
   color: #2c628f;
+}
+
+.admin-ip-line {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid rgba(216, 230, 247, .8);
+  border-radius: 6px;
+  background: rgba(239, 248, 255, .58);
+}
+
+.admin-ip-line.is-cn {
+  border-color: rgba(237, 95, 168, .28);
+  background: rgba(255, 241, 248, .72);
 }
 
 .admin-ip-cell span,
@@ -2848,7 +2863,7 @@ export const appScript = String.raw`
       state.admin.users.map(function (u) {
         return '<div class="table-row users">' +
           '<div class="admin-user-main"><strong>' + esc(u.username) + '</strong><span class="admin-subline">' + esc(u.email) + '</span></div>' +
-          '<div class="admin-ip-cell"><code>' + esc(u.last_ip || "未记录") + '</code><span>' + (u.last_seen_at ? "最近 " + dateText(u.last_seen_at) : "等待用户下次访问") + '</span></div>' +
+          renderAdminUserIps(u) +
           '<span class="admin-subline">' + esc(u.session_count || 0) + ' 个会话</span>' +
           '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
           '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
@@ -2861,6 +2876,29 @@ export const appScript = String.raw`
           '</div>' +
         '</div>';
       }).join("") + '</div></section>';
+  }
+
+  function renderAdminUserIps(user) {
+    var ips = Array.isArray(user.ip_previews) ? user.ip_previews : [];
+    if (!ips.length && user.last_ip) {
+      ips = [{ label: user.last_ip, lastSeenAt: user.last_seen_at, seenCount: 1, country: "" }];
+    }
+    if (!ips.length) {
+      return '<div class="admin-ip-cell"><code>未记录</code><span>等待用户下次访问</span></div>';
+    }
+    return '<div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div>';
+  }
+
+  function renderAdminUserIpLines(user) {
+    var ips = Array.isArray(user.ip_previews) ? user.ip_previews : [];
+    if (!ips.length && user.last_ip) ips = [{ label: user.last_ip, lastSeenAt: user.last_seen_at, seenCount: 1, country: "" }];
+    if (!ips.length) return '<div class="admin-ip-line"><code>未记录</code><span>等待用户下次访问</span></div>';
+    return ips.map(function (item, index) {
+      return '<div class="admin-ip-line ' + (item.country === "CN" ? "is-cn" : "") + '">' +
+        '<code>' + esc(item.label || item.ip || "未记录") + '</code>' +
+        '<span>' + (index === 0 ? '优先显示 · ' : '') + (item.lastSeenAt ? '最近 ' + dateText(item.lastSeenAt) : '时间未知') + (item.seenCount ? ' · ' + esc(String(item.seenCount)) + ' 次' : '') + '</span>' +
+      '</div>';
+    }).join("");
   }
 
   function renderAdminPermissions() {
@@ -4071,7 +4109,7 @@ export const appScript = String.raw`
           '<form id="admin-user-edit-form" class="form-grid" data-id="' + escAttr(user.id) + '">' +
             '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required value="' + escAttr(user.username || "") + '"></div>' +
             '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
-            '<div class="field"><label>最近 IP</label><input readonly value="' + escAttr(user.last_ip || "未记录") + '"><span class="field-hint">Ban IP 会按 IP 指纹执行，避免明文 IP 变化造成误操作。</span></div>' +
+            '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">Ban IP 会封禁该用户全部已记录 IP 指纹；中国 IP 会优先显示。</span></div>' +
             '<div class="two-col">' +
               '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>' +
               '<div class="field"><label>状态</label><select name="status"><option value="active" ' + selected(user.status, "active") + '>active</option><option value="muted" ' + selected(user.status, "muted") + '>muted</option><option value="banned" ' + selected(user.status, "banned") + '>banned</option></select></div>' +
