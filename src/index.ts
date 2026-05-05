@@ -1016,9 +1016,9 @@ app.post("/api/telegram/webhook", async (c) => {
 app.patch("/api/posts/:id", async (c) => {
   const user = requireActiveUser(c);
   if (user instanceof Response) return user;
-  const post = await c.env.DB.prepare("SELECT id, author_id, slug FROM posts WHERE id = ? AND status != 'deleted'")
+  const post = await c.env.DB.prepare("SELECT id, author_id, slug, cover_key, content FROM posts WHERE id = ? AND status != 'deleted'")
     .bind(c.req.param("id"))
-    .first<{ id: string; author_id: string; slug: string }>();
+    .first<{ id: string; author_id: string; slug: string; cover_key: string | null; content: string | null }>();
   if (!post) return c.json({ error: "帖子不存在" }, 404);
   if (post.author_id !== user.id && !isAdminUser(user)) return c.json({ error: "没有权限" }, 403);
 
@@ -1069,6 +1069,12 @@ app.patch("/api/posts/:id", async (c) => {
     WHERE id = ?
   `).bind(title, nextSlug, summary, content, finalRating, ratingReason, twitterRef, category, hazardLevel, nsfw ? 1 : 0, coverKey, status, nowIso(), post.id).run();
   await syncTags(c.env.DB, post.id, tags);
+  const removedMediaKeys = diffKeys(collectPostMediaKeys(post), collectPostMediaKeys({ cover_key: coverKey, content }));
+  if (removedMediaKeys.length) {
+    c.executionCtx.waitUntil(deleteUnusedPostMedia(c.env, post.id, removedMediaKeys).catch((error) => {
+      console.error(JSON.stringify({ level: "warn", message: "post media cleanup failed after edit", postId: post.id, error: String(error) }));
+    }));
+  }
   return c.json({ ok: true, status, slug: nextSlug });
 });
 
@@ -1376,10 +1382,21 @@ app.delete("/api/admin/posts/:id/pin", async (c) => {
 app.delete("/api/admin/posts/:id", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
+  const post = await c.env.DB.prepare("SELECT id, cover_key, content FROM posts WHERE id = ? AND status != 'deleted'")
+    .bind(c.req.param("id"))
+    .first<{ id: string; cover_key: string | null; content: string | null }>();
+  if (!post) return c.json({ error: "帖子不存在" }, 404);
+  const mediaKeys = collectPostMediaKeys(post);
   await c.env.DB.prepare("UPDATE posts SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?")
-    .bind(nowIso(), nowIso(), c.req.param("id"))
+    .bind(nowIso(), nowIso(), post.id)
     .run();
-  return c.json({ ok: true });
+  try {
+    const cleanup = await deleteUnusedPostMedia(c.env, post.id, mediaKeys);
+    return c.json({ ok: true, ...cleanup });
+  } catch (error) {
+    console.error(JSON.stringify({ level: "warn", message: "post media cleanup failed after delete", postId: post.id, error: String(error) }));
+    return c.json({ ok: true, mediaFound: mediaKeys.length, mediaDeleted: 0, mediaSkipped: 0, mediaCleanupError: "图片清理失败，请稍后重试" });
+  }
 });
 
 app.get("/api/admin/comments", async (c) => {
@@ -4059,6 +4076,105 @@ function optionalR2Key(value: unknown): string | null {
   if (!key) return null;
   if (key.includes("..") || key.startsWith("/") || key.length > 300) return null;
   return key;
+}
+
+function collectPostMediaKeys(source: { cover_key?: unknown; content?: unknown }): string[] {
+  const keys = new Set<string>();
+  addOwnedUploadKey(keys, source.cover_key);
+  for (const key of extractContentMediaKeys(source.content)) {
+    addOwnedUploadKey(keys, key);
+  }
+  return [...keys];
+}
+
+function diffKeys(previous: string[], next: string[]): string[] {
+  const nextSet = new Set(next);
+  return previous.filter((key) => !nextSet.has(key));
+}
+
+function extractContentMediaKeys(content: unknown): string[] {
+  const text = String(content ?? "");
+  const keys = new Set<string>();
+  const markdownImagePattern = /!\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = markdownImagePattern.exec(text)) !== null) {
+    addOwnedUploadKey(keys, mediaKeyFromUrl(match[1]));
+  }
+
+  const rawMediaPattern = /(?:https?:\/\/[^\s"'<>)]*)?\/media\/([^?\s"'<>)]*)(?:[?#][^\s"'<>)]*)?/g;
+  while ((match = rawMediaPattern.exec(text)) !== null) {
+    addOwnedUploadKey(keys, mediaKeyFromUrl(match[0]));
+  }
+  return [...keys];
+}
+
+function addOwnedUploadKey(keys: Set<string>, value: unknown): void {
+  const key = ownedUploadKey(value);
+  if (key) keys.add(key);
+}
+
+function ownedUploadKey(value: unknown): string | null {
+  const key = optionalR2Key(value);
+  if (!key || !key.startsWith("uploads/")) return null;
+  return key;
+}
+
+function mediaKeyFromUrl(value: unknown): string | null {
+  let text = String(value ?? "").trim().replace(/^<|>$/g, "");
+  if (!text) return null;
+  try {
+    if (/^https?:\/\//i.test(text)) {
+      const url = new URL(text);
+      if (!isOwnMediaHost(url.hostname)) return null;
+      text = url.pathname;
+    }
+  } catch {
+    return null;
+  }
+  text = text.split(/[?#]/)[0] ?? "";
+  if (text.startsWith("/media/")) text = text.slice("/media/".length);
+  if (text.startsWith("media/")) text = text.slice("media/".length);
+  try {
+    text = decodeURIComponent(text);
+  } catch {
+    // Keep the raw path if it is not percent-encoded correctly.
+  }
+  return ownedUploadKey(text);
+}
+
+function isOwnMediaHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  const siteHost = new URL(SITE_ORIGIN).hostname.toLowerCase();
+  return host === siteHost || host === `www.${siteHost}` || host === "nomtf.guhuao666.workers.dev";
+}
+
+async function deleteUnusedPostMedia(env: Env, postId: string, keys: string[]): Promise<{ mediaFound: number; mediaDeleted: number; mediaSkipped: number }> {
+  const uniqueKeys = [...new Set(keys.map(ownedUploadKey).filter((key): key is string => Boolean(key)))];
+  if (!uniqueKeys.length) return { mediaFound: 0, mediaDeleted: 0, mediaSkipped: 0 };
+  const deleteKeys = await unusedPostMediaKeys(env.DB, postId, uniqueKeys);
+  for (let i = 0; i < deleteKeys.length; i += 100) {
+    await env.MEDIA.delete(deleteKeys.slice(i, i + 100));
+  }
+  return {
+    mediaFound: uniqueKeys.length,
+    mediaDeleted: deleteKeys.length,
+    mediaSkipped: uniqueKeys.length - deleteKeys.length
+  };
+}
+
+async function unusedPostMediaKeys(db: D1Database, postId: string, keys: string[]): Promise<string[]> {
+  const unused: string[] = [];
+  for (const key of keys) {
+    const row = await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM posts
+      WHERE id != ?
+        AND status != 'deleted'
+        AND (cover_key = ? OR instr(COALESCE(content, ''), ?) > 0)
+    `).bind(postId, key, key).first<{ count: number }>();
+    if (Number(row?.count ?? 0) === 0) unused.push(key);
+  }
+  return unused;
 }
 
 function isUploadedFile(value: unknown): value is File {

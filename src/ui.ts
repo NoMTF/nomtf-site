@@ -5010,8 +5010,16 @@ export const appScript = String.raw`
 
   async function adminDelete(path) {
     try {
-      await api(path, { method: "DELETE" });
-      toast("已删除");
+      var result = await api(path, { method: "DELETE" });
+      if (result && result.mediaCleanupError) {
+        toast("已删除，但图片清理失败");
+      } else if (result && Number(result.mediaDeleted || 0) > 0) {
+        toast("已删除，并清理 " + result.mediaDeleted + " 张图片");
+      } else if (result && Number(result.mediaSkipped || 0) > 0) {
+        toast("已删除；有图片仍被其他帖子使用，已保留");
+      } else {
+        toast("已删除");
+      }
       await route();
     } catch (error) {
       toast(error.message);
