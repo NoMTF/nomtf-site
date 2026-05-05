@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260505-hot-admin-mobile-search";
+export const ASSET_VERSION = "20260505-admin-post-comments";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
@@ -1632,6 +1632,26 @@ html.image-viewer-open body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.admin-post-comments-panel {
+  margin-top: 4px;
+}
+
+.admin-comment-editor-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.admin-comment-edit-row {
+  grid-template-columns: minmax(240px, 1fr) auto;
+  align-items: start;
+}
+
+.admin-comment-edit-content textarea {
+  min-height: 72px;
+  font-size: 14px;
 }
 
 .table-row {
@@ -3377,55 +3397,41 @@ export const appScript = String.raw`
 
   function renderAdminContentManagement() {
     var query = state.adminUi.contentQuery || "";
-    var posts = filterAdminPosts(state.admin.posts || [], query);
-    var comments = filterAdminComments(state.admin.comments || [], query);
+    var allPosts = state.admin.posts || [];
+    var allComments = state.admin.comments || [];
+    var matchedComments = filterAdminComments(allComments, query);
+    var commentPostIds = {};
+    matchedComments.forEach(function (cm) {
+      if (cm.post_id) commentPostIds[cm.post_id] = true;
+    });
+    var posts = filterAdminPosts(allPosts, query);
+    if (query) {
+      var added = {};
+      posts.forEach(function (p) { added[p.id] = true; });
+      allPosts.forEach(function (p) {
+        if (!added[p.id] && commentPostIds[p.id]) posts.push(p);
+      });
+    }
     var visiblePosts = posts.slice(0, 5);
     var foldedPosts = posts.slice(5);
-    var commentGroups = groupAdminComments(comments);
     return '<section class="page-section admin-section">' +
       '<div class="admin-section-head">' +
-        '<div><h2 class="section-title">内容管理</h2><p class="admin-subline">帖子和评论统一管理；匹配 ' + esc(String(posts.length)) + ' 篇帖子 / ' + esc(String(comments.length)) + ' 条评论。</p></div>' +
+        '<div><h2 class="section-title">内容管理</h2><p class="admin-subline">帖子为主入口；本帖评论已并入帖子编辑。匹配 ' + esc(String(posts.length)) + ' 篇帖子 / ' + esc(String(matchedComments.length)) + ' 条相关评论。</p></div>' +
         '<div class="admin-tools"><input class="admin-search" data-admin-filter="content" type="search" placeholder="搜索帖子、评论、作者、状态、分类" value="' + escAttr(query) + '"></div>' +
       '</div>' +
-      '<div class="admin-comment-groups">' +
-        '<details class="admin-comment-group" open><summary><span class="admin-comment-title"><span>帖子</span><span class="status-pill">' + esc(String(posts.length)) + '</span></span></summary>' +
-          (posts.length ? '<div class="table">' + visiblePosts.map(adminPostRow).join("") + '</div>' : '<div class="empty-state">没有匹配的帖子。</div>') +
-          (foldedPosts.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(foldedPosts.length)) + ' 篇帖子</summary><div class="table">' + foldedPosts.map(adminPostRow).join("") + '</div></details>' : '') +
-        '</details>' +
-        '<details class="admin-comment-group"><summary><span class="admin-comment-title"><span>评论</span><span class="status-pill">' + esc(String(comments.length)) + '</span></span></summary>' +
-          (commentGroups.length ? '<div class="admin-comment-groups">' + commentGroups.map(function (group, index) {
-            return '<details class="admin-comment-group" ' + (query && index < 5 ? 'open' : '') + '>' +
-              '<summary><span class="admin-comment-title"><span>' + esc(group.title) + '</span><span class="status-pill">' + esc(String(group.comments.length)) + '</span></span></summary>' +
-              '<div class="table">' + group.comments.map(adminCommentRow).join("") + '</div>' +
-            '</details>';
-          }).join("") + '</div>' : '<div class="empty-state">没有匹配的评论。</div>') +
-        '</details>' +
-      '</div>' +
-    '</section>';
-  }
-
-  function renderAdminPosts() {
-    var query = state.adminUi.postQuery || "";
-    var posts = filterAdminPosts(state.admin.posts || [], query);
-    var visible = posts.slice(0, 5);
-    var folded = posts.slice(5);
-    return '<section class="page-section admin-section">' +
-      '<div class="admin-section-head">' +
-        '<div><h2 class="section-title">投稿审核</h2><p class="admin-subline">匹配 ' + esc(String(posts.length)) + ' 篇，先显示前 5 篇，剩下折叠。</p></div>' +
-        '<div class="admin-tools"><input class="admin-search" data-admin-filter="posts" type="search" placeholder="搜索标题、作者、分类、状态" value="' + escAttr(query) + '"></div>' +
-      '</div>' +
-      (posts.length ? '<div class="table">' + visible.map(adminPostRow).join("") + '</div>' : '<div class="empty-state">没有匹配的帖子。</div>') +
-      (folded.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(folded.length)) + ' 篇帖子</summary><div class="table">' + folded.map(adminPostRow).join("") + '</div></details>' : '') +
+      (posts.length ? '<div class="table">' + visiblePosts.map(adminPostRow).join("") + '</div>' : '<div class="empty-state">没有匹配的帖子。</div>') +
+      (foldedPosts.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(foldedPosts.length)) + ' 篇帖子</summary><div class="table">' + foldedPosts.map(adminPostRow).join("") + '</div></details>' : '') +
     '</section>';
   }
 
   function adminPostRow(p) {
     var isRating = isRatingCategory(p.category);
+    var commentCount = Number(p.comment_count || p.commentCount || 0);
     return '<div class="table-row admin-post-row">' +
       '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + ' · 浏览 ' + esc(String(p.view_count || 0)) + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
       '<span>' + categoryText(p.category) + (isRating ? ' · 等级 ' + esc(String(p.hazard_level)) : '') + (p.pinned_at ? ' · 置顶' : '') + '</span>' +
       '<span class="status-pill">' + statusText(p.status) + '</span>' +
-      '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="ghost-button" data-action="' + (p.pinned_at ? 'admin-unpin-post' : 'admin-pin-post') + '" data-id="' + escAttr(p.id) + '">' + icon("pin") + '<span>' + (p.pinned_at ? '取消置顶' : '置顶') + '</span></button><button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
+      '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button><button class="ghost-button" data-action="admin-edit-post-comments" data-id="' + escAttr(p.id) + '">' + icon("comment") + '<span>评论 ' + esc(String(commentCount)) + '</span></button>' + renderPostReviewActions(p) + '<button class="ghost-button" data-action="' + (p.pinned_at ? 'admin-unpin-post' : 'admin-pin-post') + '" data-id="' + escAttr(p.id) + '">' + icon("pin") + '<span>' + (p.pinned_at ? '取消置顶' : '置顶') + '</span></button><button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
     '</div>';
   }
 
@@ -3465,32 +3471,28 @@ export const appScript = String.raw`
     return (category || "rating") === "rating";
   }
 
-  function renderAdminComments() {
-    var query = state.adminUi.commentQuery || "";
-    var comments = filterAdminComments(state.admin.comments || [], query);
-    var groups = groupAdminComments(comments);
-    return '<section class="page-section admin-section">' +
-      '<div class="admin-section-head">' +
-        '<div><h2 class="section-title">回复</h2><p class="admin-subline">按文章分组，点击文章标题展开；匹配 ' + esc(String(comments.length)) + ' 条。</p></div>' +
-        '<div class="admin-tools"><input class="admin-search" data-admin-filter="comments" type="search" placeholder="搜索评论、文章、作者、状态" value="' + escAttr(query) + '"></div>' +
-      '</div>' +
-      (groups.length ? '<div class="admin-comment-groups">' + groups.map(function (group, index) {
-        return '<details class="admin-comment-group" ' + (query && index < 5 ? 'open' : '') + '>' +
-          '<summary><span class="admin-comment-title"><span>' + esc(group.title) + '</span><span class="status-pill">' + esc(String(group.comments.length)) + '</span></span></summary>' +
-          '<div class="table">' + group.comments.map(adminCommentRow).join("") + '</div>' +
-        '</details>';
-      }).join("") + '</div>' : '<div class="empty-state">没有匹配的回复。</div>') +
-    '</section>';
+  function renderAdminPostCommentsPanel(postId, comments, open) {
+    comments = comments || [];
+    return '<details class="admin-comment-group admin-post-comments-panel" data-post-comments data-post-id="' + escAttr(postId) + '" ' + (open ? 'open' : '') + '>' +
+      '<summary><span class="admin-comment-title"><span>本帖评论</span><span class="status-pill">' + esc(String(comments.length)) + '</span></span></summary>' +
+      (comments.length ? '<div class="admin-comment-editor-list">' + comments.map(adminCommentEditorRow).join("") + '</div>' : '<div class="empty-state">这篇帖子还没有评论。</div>') +
+    '</details>';
   }
 
-  function adminCommentRow(cm) {
-    return '<div class="table-row">' +
-      '<span>' + esc(excerpt(cm.content, 80)) + '<span class="admin-meta">' + esc(cm.parent_id ? "回复评论" : "顶层评论") + ' · ' + esc(dateText(cm.created_at)) + '</span></span>' +
-      '<span>' + esc(cm.author_name || "匿名") + '</span>' +
-      '<span class="status-pill">' + esc(cm.status) + '</span>' +
+  function adminCommentEditorRow(cm) {
+    var postId = cm.post_id || cm.postId || "";
+    var kind = cm.parent_id || cm.parentId ? "回复评论" : "顶层评论";
+    var created = cm.created_at || cm.createdAt || "";
+    var author = cm.author_name || cm.authorName || "匿名";
+    return '<div class="table-row admin-comment-edit-row" data-comment-row data-id="' + escAttr(cm.id) + '" data-post-id="' + escAttr(postId) + '">' +
+      '<div class="field admin-comment-edit-content">' +
+        '<label>评论正文</label>' +
+        '<textarea data-comment-content maxlength="100" required>' + esc(cm.content || "") + '</textarea>' +
+        '<span class="admin-meta">' + esc(author) + ' · ' + esc(kind) + ' · ' + esc(dateText(created)) + ' · ' + esc(cm.status || "") + '</span>' +
+      '</div>' +
       '<div class="table-actions">' +
-        (cm.post_slug ? '<button class="ghost-button" data-action="open-post" data-slug="' + escAttr(cm.post_slug) + '">' + icon("doc") + '<span>查看文章</span></button>' : '') +
-        '<button class="danger-button" data-action="admin-delete-comment" data-id="' + escAttr(cm.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+        '<button class="primary-button" type="button" data-action="admin-save-comment" data-id="' + escAttr(cm.id) + '" data-post-id="' + escAttr(postId) + '">' + icon("doc") + '<span>保存评论</span></button>' +
+        '<button class="danger-button" type="button" data-action="admin-delete-comment" data-id="' + escAttr(cm.id) + '" data-post-id="' + escAttr(postId) + '">' + icon("trash") + '<span>删除</span></button>' +
       '</div>' +
     '</div>';
   }
@@ -3528,20 +3530,6 @@ export const appScript = String.raw`
     return permissions.filter(function (p) {
       return normalizeAdminQuery([p.kind, p.subject, p.level, p.reason, p.created_by_name].join(" ")).indexOf(needle) >= 0;
     });
-  }
-
-  function groupAdminComments(comments) {
-    var map = {};
-    var groups = [];
-    comments.forEach(function (cm) {
-      var key = cm.post_id || cm.post_title || "deleted";
-      if (!map[key]) {
-        map[key] = { title: cm.post_title || "已删除帖子", comments: [] };
-        groups.push(map[key]);
-      }
-      map[key].comments.push(cm);
-    });
-    return groups;
   }
 
   function normalizeAdminQuery(value) {
@@ -3775,8 +3763,11 @@ export const appScript = String.raw`
     if (action === "admin-unpin-post") await adminPinPost(target.getAttribute("data-id"), false);
     if (action === "admin-export-markdown") window.location.href = "/api/admin/export/markdown";
     if (action === "admin-edit-post") await showAdminPostEditor(target.getAttribute("data-id"));
+    if (action === "admin-edit-post-comments") await showAdminPostEditor(target.getAttribute("data-id"), { openComments: true });
+    if (action === "admin-toggle-post-comments") toggleAdminPostComments();
+    if (action === "admin-save-comment") await saveAdminComment(target);
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
-    if (action === "admin-delete-comment") await adminDelete("/api/admin/comments/" + target.getAttribute("data-id"));
+    if (action === "admin-delete-comment") await adminDeleteComment(target.getAttribute("data-id"), target.getAttribute("data-post-id"));
     if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
     if (action === "admin-edit-user") showAdminUserEditor(target.getAttribute("data-id"));
     if (action === "admin-ban-user") await adminBanUser(target.getAttribute("data-id"));
@@ -4973,6 +4964,75 @@ export const appScript = String.raw`
     }
   }
 
+  function toggleAdminPostComments() {
+    var panel = document.querySelector("[data-post-comments]");
+    if (!panel) return;
+    panel.open = !panel.open;
+    if (panel.open) {
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function findAdminPostCommentsPanel(postId) {
+    var panels = Array.prototype.slice.call(document.querySelectorAll("[data-post-comments]"));
+    return panels.find(function (panel) {
+      return panel.getAttribute("data-post-id") === String(postId || "");
+    }) || null;
+  }
+
+  async function refreshAdminPostCommentsPanel(postId) {
+    if (!postId) return;
+    var data = await api("/api/admin/posts/" + postId + "/comments");
+    var panel = findAdminPostCommentsPanel(postId);
+    if (panel) {
+      panel.outerHTML = renderAdminPostCommentsPanel(postId, data.comments || [], true);
+    }
+  }
+
+  async function saveAdminComment(target) {
+    try {
+      var row = target.closest("[data-comment-row]");
+      if (!row) return;
+      var commentId = row.getAttribute("data-id");
+      var postId = row.getAttribute("data-post-id");
+      var textarea = row.querySelector("[data-comment-content]");
+      var content = textarea ? String(textarea.value || "").trim() : "";
+      if (content.length < 2) {
+        toast("评论太短了");
+        return;
+      }
+      if (content.length > 100) {
+        toast("评论最多 100 字");
+        return;
+      }
+      await api("/api/admin/comments/" + commentId, {
+        method: "PATCH",
+        body: { content: content }
+      });
+      toast("评论已保存");
+      await refreshAdminPostCommentsPanel(postId);
+      await loadAdmin();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function adminDeleteComment(commentId, postId) {
+    try {
+      if (!confirm("确定删除这条评论？")) return;
+      await api("/api/admin/comments/" + commentId, { method: "DELETE" });
+      toast("评论已删除");
+      if (postId) {
+        await refreshAdminPostCommentsPanel(postId);
+        await loadAdmin();
+      } else {
+        await route();
+      }
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   async function adminRevokeSessions(userId) {
     try {
       await api("/api/admin/users/" + userId + "/revoke-sessions", { method: "POST" });
@@ -4993,9 +5053,15 @@ export const appScript = String.raw`
     return siteAssets.levelCovers[Number(level)] || "";
   }
 
-  async function showAdminPostEditor(postId) {
+  async function showAdminPostEditor(postId, options) {
     try {
-      var data = await api("/api/admin/posts/" + postId);
+      options = options || {};
+      var loaded = await Promise.all([
+        api("/api/admin/posts/" + postId),
+        api("/api/admin/posts/" + postId + "/comments")
+      ]);
+      var data = loaded[0];
+      var comments = loaded[1].comments || [];
       var post = data.post;
       var postRating = isRatingCategory(post.category);
       var ratingHiddenClass = postRating ? "" : " hidden";
@@ -5034,7 +5100,8 @@ export const appScript = String.raw`
               '</div>' +
               '<div class="field"><label>正文</label><textarea name="content" maxlength="80000" required placeholder="支持换行、**加粗**，上传正文图片后会组成图集追加到末尾">' + esc(post.content || "") + '</textarea></div>' +
               '<label class="post-meta"><input name="nsfw" type="checkbox" ' + (post.nsfw ? "checked" : "") + '> NSFW / 激烈表达提示</label>' +
-              '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存帖子</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
+              renderAdminPostCommentsPanel(post.id, comments, Boolean(options.openComments)) +
+              '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存帖子</span></button><button class="ghost-button" type="button" data-action="admin-toggle-post-comments">' + icon("comment") + '<span>编辑本帖评论</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
             '</form>' +
           '</div>' +
         '</div>'

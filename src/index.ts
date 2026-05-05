@@ -1176,6 +1176,7 @@ app.get("/api/admin/posts", async (c) => {
     SELECT
       p.id, p.title, p.slug, p.summary, p.category, p.pinned_at, p.hazard_level, p.nsfw, p.status, COALESCE(p.view_count, 0) AS view_count,
       p.created_at, p.updated_at, p.reviewed_at,
+      COALESCE((SELECT COUNT(*) FROM comments cm WHERE cm.post_id = p.id AND cm.status != 'deleted'), 0) AS comment_count,
       COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       reviewer.username AS reviewed_by_name
     FROM posts p
@@ -1260,6 +1261,30 @@ app.get("/api/admin/export/markdown", async (c) => {
       "Cache-Control": "no-store"
     }
   });
+});
+
+app.get("/api/admin/posts/:id/comments", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const post = await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status != 'deleted'")
+    .bind(c.req.param("id"))
+    .first<{ id: string }>();
+  if (!post) return c.json({ error: "帖子不存在" }, 404);
+  const result = await c.env.DB.prepare(`
+    SELECT
+      cm.id, cm.post_id, cm.parent_id, cm.content, cm.status, cm.created_at, cm.updated_at, cm.visitor_id,
+      p.title AS post_title,
+      p.slug AS post_slug,
+      p.category AS post_category,
+      u.username AS author_name
+    FROM comments cm
+    LEFT JOIN posts p ON p.id = cm.post_id
+    LEFT JOIN users u ON u.id = cm.author_id
+    WHERE cm.post_id = ?
+    ORDER BY cm.created_at ASC
+    LIMIT 500
+  `).bind(c.req.param("id")).all<Record<string, unknown>>();
+  return c.json({ comments: result.results ?? [] });
 });
 
 app.get("/api/admin/posts/:id", async (c) => {
@@ -1353,6 +1378,24 @@ app.get("/api/admin/comments", async (c) => {
     LIMIT 300
   `).all<Record<string, unknown>>();
   return c.json({ comments: result.results ?? [] });
+});
+
+app.patch("/api/admin/comments/:id", async (c) => {
+  const user = requireAdmin(c);
+  if (user instanceof Response) return user;
+  const body = await readJson(c);
+  const rawContent = String(body.content ?? "").trim();
+  if (rawContent.length > MAX_COMMENT_LENGTH) return c.json({ error: `评论最多 ${MAX_COMMENT_LENGTH} 字` }, 400);
+  const content = cleanText(rawContent, MAX_COMMENT_LENGTH);
+  if (content.length < 2) return c.json({ error: "评论太短了" }, 400);
+  const existing = await c.env.DB.prepare("SELECT id FROM comments WHERE id = ? AND status != 'deleted'")
+    .bind(c.req.param("id"))
+    .first<{ id: string }>();
+  if (!existing) return c.json({ error: "评论不存在" }, 404);
+  await c.env.DB.prepare("UPDATE comments SET content = ?, updated_at = ? WHERE id = ?")
+    .bind(content, nowIso(), c.req.param("id"))
+    .run();
+  return c.json({ ok: true });
 });
 
 app.delete("/api/admin/comments/:id", async (c) => {
