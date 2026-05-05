@@ -17,11 +17,14 @@ type User = {
   role: Role;
   status: UserStatus;
   created_at: string;
+  isSuAdmin?: boolean;
+  groups?: string[];
 };
 
 type SessionUser = User & {
   session_id: string;
   expires_at: string;
+  is_suadmin?: number | boolean;
 };
 
 type UiConfig = {
@@ -202,6 +205,7 @@ const INDEXNOW_KEY = "b3d9f2a6c8e14f0db7a24591c6e83a40";
 const MAX_FINAL_RATING_LENGTH = 3;
 const MAX_RATING_REASON_LENGTH = 240;
 const MAX_TWITTER_REF_LENGTH = 160;
+const SUADMIN_GROUP = "SUadmin";
 const WEAK_PASSWORD_PARTS = [
   "123456",
   "123456789",
@@ -420,7 +424,6 @@ app.post("/api/register", async (c) => {
   const username = cleanName(body.username);
   const email = String(body.email ?? "").trim().toLowerCase();
   const password = String(body.password ?? "");
-  const inviteCode = String(body.inviteCode ?? "");
 
   if (!username || username.length < 2 || username.length > MAX_DISPLAY_NAME_LENGTH) {
     return c.json({ error: `昵称需要 2-${MAX_DISPLAY_NAME_LENGTH} 个字符` }, 400);
@@ -441,8 +444,7 @@ app.post("/api/register", async (c) => {
   const now = nowIso();
   const existingCount = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
   const isFirstUser = Number(existingCount?.count ?? 0) === 0;
-  const isInviteAdmin = Boolean(c.env.ADMIN_INVITE_CODE) && safeEqualText(inviteCode, c.env.ADMIN_INVITE_CODE);
-  const role: Role = isFirstUser || isInviteAdmin ? "admin" : "user";
+  const role: Role = isFirstUser ? "admin" : "user";
   const userId = crypto.randomUUID();
   const passwordHash = await hashPassword(password);
   const ipAddress = c.get("ipAddress");
@@ -459,6 +461,7 @@ app.post("/api/register", async (c) => {
   }
 
   await recordUserIpEvent(c, userId);
+  if (isFirstUser) await setUserGroup(c.env.DB, userId, SUADMIN_GROUP, true);
   await setCooldown(c.env.DB, "register_success_ip", ipSubject(c), REGISTER_IP_COOLDOWN_SECONDS);
   await createSession(c, userId);
   return c.json({ ok: true, user: await getUserById(c.env.DB, userId) }, 201);
@@ -507,7 +510,7 @@ app.post("/api/login", async (c) => {
     .run();
   await recordUserIpEvent(c, user.id);
   await createSession(c, user.id);
-  const { password_hash: _, ...safeUser } = user;
+  const safeUser = await getUserById(c.env.DB, user.id);
   return c.json({ ok: true, user: safeUser });
 });
 
@@ -843,7 +846,7 @@ app.post("/api/posts", async (c) => {
   const requestedSlug = cleanText(body.slug, 90);
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
-  if (category === "about" && user.role !== "admin") {
+  if (category === "about" && !isAdminUser(user)) {
     return c.json({ error: "关于页只能由管理员发布" }, 403);
   }
   const status = postStatusForCreate(user, category, body.status);
@@ -1017,7 +1020,7 @@ app.patch("/api/posts/:id", async (c) => {
     .bind(c.req.param("id"))
     .first<{ id: string; author_id: string; slug: string }>();
   if (!post) return c.json({ error: "帖子不存在" }, 404);
-  if (post.author_id !== user.id && user.role !== "admin") return c.json({ error: "没有权限" }, 403);
+  if (post.author_id !== user.id && !isAdminUser(user)) return c.json({ error: "没有权限" }, 403);
 
   const body = await readJson(c);
   const title = cleanText(body.title, 120);
@@ -1030,13 +1033,13 @@ app.patch("/api/posts/:id", async (c) => {
   const twitterRef = isRating ? cleanText(body.twitterRef ?? body.twitter_ref, MAX_TWITTER_REF_LENGTH) : "";
   const hazardLevel = isRating ? Number(body.hazardLevel ?? body.hazard_level) : 1;
   const nsfw = Boolean(body.nsfw);
-  const requestedSlug = user.role === "admin" ? cleanText(body.slug, 90) : "";
+  const requestedSlug = isAdminUser(user) ? cleanText(body.slug, 90) : "";
   const coverKey = optionalR2Key(body.coverKey);
   const tags = cleanTags(body.tags);
-  if (category === "about" && user.role !== "admin") {
+  if (category === "about" && !isAdminUser(user)) {
     return c.json({ error: "关于页只能由管理员发布" }, 403);
   }
-  const status: PostStatus = user.role === "admin"
+  const status: PostStatus = isAdminUser(user)
     ? cleanPostStatus(body.status, "published")
     : (category === "talk" ? "published" : "pending");
   if (!title || !content) {
@@ -1056,7 +1059,7 @@ app.patch("/api/posts/:id", async (c) => {
     return c.json({ error: "最终等级必填，格式只能是 1-、1、1+ 到 5-、5、5+" }, 400);
   }
 
-  const nextSlug = user.role === "admin" && requestedSlug
+  const nextSlug = isAdminUser(user) && requestedSlug
     ? await uniqueSlug(c.env.DB, requestedSlug, post.id)
     : post.slug;
 
@@ -1430,11 +1433,12 @@ app.get("/api/admin/users", async (c) => {
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
     SELECT id, username, email, role, status, created_at, last_ip, last_ip_hash, last_seen_at, last_login_at,
-      COALESCE((SELECT COUNT(*) FROM sessions s WHERE s.user_id = users.id AND s.expires_at > ?), 0) AS session_count
+      COALESCE((SELECT COUNT(*) FROM sessions s WHERE s.user_id = users.id AND s.expires_at > ?), 0) AS session_count,
+      EXISTS(SELECT 1 FROM user_groups ug WHERE ug.user_id = users.id AND ug.group_name = ?) AS is_suadmin
     FROM users
     ORDER BY created_at DESC
     LIMIT 100
-  `).bind(nowIso()).all<Record<string, unknown>>();
+  `).bind(nowIso(), SUADMIN_GROUP).all<Record<string, unknown>>();
   return c.json({ users: await attachUserIpPreviews(c.env.DB, result.results ?? []) });
 });
 
@@ -1445,8 +1449,12 @@ app.patch("/api/admin/users/:id", async (c) => {
   const username = body.username === undefined ? null : cleanName(body.username);
   const email = body.email === undefined ? null : String(body.email ?? "").trim().toLowerCase();
   const status = ["active", "muted", "banned"].includes(String(body.status)) ? String(body.status) : null;
-  const role = ["user", "admin"].includes(String(body.role)) ? String(body.role) : null;
-  if (!status && !role && username === null && email === null) return c.json({ error: "没有可更新字段" }, 400);
+  let role = body.role === undefined ? null : (["user", "admin"].includes(String(body.role)) ? String(body.role) as Role : "");
+  const suadmin = body.suadmin === undefined ? null : Boolean(body.suadmin);
+  const changesPrivilege = body.role !== undefined || suadmin !== null;
+  if (body.role !== undefined && !role) return c.json({ error: "角色字段不正确" }, 400);
+  if (changesPrivilege && !isSuAdminUser(admin)) return c.json({ error: "需要 SUadmin 权限" }, 403);
+  if (!status && !role && suadmin === null && username === null && email === null) return c.json({ error: "没有可更新字段" }, 400);
   if (c.req.param("id") === admin.id && status === "banned") return c.json({ error: "不能封禁自己" }, 400);
   if (c.req.param("id") === admin.id && role === "user") return c.json({ error: "不能移除自己的管理员权限" }, 400);
   if (username !== null && (username.length < 2 || username.length > MAX_DISPLAY_NAME_LENGTH)) {
@@ -1459,6 +1467,15 @@ app.patch("/api/admin/users/:id", async (c) => {
     .bind(c.req.param("id"))
     .first<{ id: string; role: Role }>();
   if (!target) return c.json({ error: "用户不存在" }, 404);
+  const targetIsSuAdmin = await userHasGroup(c.env.DB, target.id, SUADMIN_GROUP);
+  if (targetIsSuAdmin && !isSuAdminUser(admin)) {
+    return c.json({ error: "不能操作 SUadmin 账号" }, 403);
+  }
+  if (suadmin === true && (role ?? target.role) !== "admin") role = "admin";
+  const removesSuAdmin = targetIsSuAdmin && (suadmin === false || role === "user" || status === "banned");
+  if (removesSuAdmin && await isLastSuAdmin(c.env.DB, target.id)) {
+    return c.json({ error: "不能移除最后一个 SUadmin" }, 400);
+  }
   if (target.role === "admin" && role === "user" && await isLastAdmin(c.env.DB, target.id)) {
     return c.json({ error: "不能移除最后一个管理员" }, 400);
   }
@@ -1482,9 +1499,14 @@ app.patch("/api/admin/users/:id", async (c) => {
     values.push(role);
   }
   try {
-    await c.env.DB.prepare(`UPDATE users SET ${pieces.join(", ")}, updated_at = ? WHERE id = ?`)
-      .bind(...values, nowIso(), c.req.param("id"))
-      .run();
+    if (pieces.length) {
+      await c.env.DB.prepare(`UPDATE users SET ${pieces.join(", ")}, updated_at = ? WHERE id = ?`)
+        .bind(...values, nowIso(), c.req.param("id"))
+        .run();
+    }
+    if (suadmin !== null || role === "user") {
+      await setUserGroup(c.env.DB, target.id, SUADMIN_GROUP, suadmin === true && (role ?? target.role) === "admin");
+    }
   } catch {
     return c.json({ error: "昵称或邮箱已被占用" }, 409);
   }
@@ -1500,6 +1522,13 @@ app.delete("/api/admin/users/:id", async (c) => {
     .bind(targetId)
     .first<{ id: string; role: Role }>();
   if (!target) return c.json({ error: "用户不存在" }, 404);
+  const targetIsSuAdmin = await userHasGroup(c.env.DB, target.id, SUADMIN_GROUP);
+  if (targetIsSuAdmin && !isSuAdminUser(admin)) {
+    return c.json({ error: "不能操作 SUadmin 账号" }, 403);
+  }
+  if (targetIsSuAdmin && await isLastSuAdmin(c.env.DB, target.id)) {
+    return c.json({ error: "不能删除最后一个 SUadmin" }, 400);
+  }
   if (target.role === "admin" && await isLastAdmin(c.env.DB, target.id)) {
     return c.json({ error: "不能删除最后一个管理员" }, 400);
   }
@@ -1517,6 +1546,13 @@ app.post("/api/admin/users/:id/ban", async (c) => {
     .bind(targetId)
     .first<{ id: string; role: Role }>();
   if (!target) return c.json({ error: "用户不存在" }, 404);
+  const targetIsSuAdmin = await userHasGroup(c.env.DB, target.id, SUADMIN_GROUP);
+  if (targetIsSuAdmin && !isSuAdminUser(admin)) {
+    return c.json({ error: "不能操作 SUadmin 账号" }, 403);
+  }
+  if (targetIsSuAdmin && await isLastSuAdmin(c.env.DB, target.id)) {
+    return c.json({ error: "不能封禁最后一个 SUadmin" }, 400);
+  }
   if (target.role === "admin" && await isLastAdmin(c.env.DB, target.id)) {
     return c.json({ error: "不能封禁最后一个管理员" }, 400);
   }
@@ -1529,7 +1565,7 @@ app.post("/api/admin/users/:id/ban", async (c) => {
 });
 
 app.post("/api/admin/users/:id/ban-ip", async (c) => {
-  const admin = requireAdmin(c);
+  const admin = requireSuAdmin(c);
   if (admin instanceof Response) return admin;
   const targetId = c.req.param("id");
   const target = await c.env.DB.prepare("SELECT id, username, last_ip, last_ip_hash FROM users WHERE id = ?")
@@ -1555,12 +1591,15 @@ app.post("/api/admin/users/:id/revoke-sessions", async (c) => {
   if (admin instanceof Response) return admin;
   const targetId = c.req.param("id");
   if (targetId === admin.id) return c.json({ error: "不能在这里踢掉自己的会话" }, 400);
+  if (await userHasGroup(c.env.DB, targetId, SUADMIN_GROUP) && !isSuAdminUser(admin)) {
+    return c.json({ error: "不能操作 SUadmin 账号" }, 403);
+  }
   await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetId).run();
   return c.json({ ok: true });
 });
 
 app.get("/api/admin/permissions", async (c) => {
-  const user = requireAdmin(c);
+  const user = requireSuAdmin(c);
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
     SELECT vp.*, u.username AS created_by_name
@@ -1573,7 +1612,7 @@ app.get("/api/admin/permissions", async (c) => {
 });
 
 app.post("/api/admin/permissions", async (c) => {
-  const user = requireAdmin(c);
+  const user = requireSuAdmin(c);
   if (user instanceof Response) return user;
   const body = await readJson(c);
   const kind = ["user", "visitor", "ip_hash"].includes(String(body.kind)) ? String(body.kind) : "";
@@ -1591,14 +1630,14 @@ app.post("/api/admin/permissions", async (c) => {
 });
 
 app.delete("/api/admin/permissions/:id", async (c) => {
-  const user = requireAdmin(c);
+  const user = requireSuAdmin(c);
   if (user instanceof Response) return user;
   await c.env.DB.prepare("DELETE FROM visitor_permissions WHERE id = ?").bind(c.req.param("id")).run();
   return c.json({ ok: true });
 });
 
 app.patch("/api/admin/site-settings", async (c) => {
-  const user = requireAdmin(c);
+  const user = requireSuAdmin(c);
   if (user instanceof Response) return user;
   const body = await readJson(c);
   const ui = sanitizeUiConfig(body.ui);
@@ -1733,7 +1772,7 @@ async function bindRequestContext(c: AppContext, next: Next) {
     }));
   }
 
-  if (permission === "banned" && user?.role !== "admin") {
+  if (permission === "banned" && !isAdminUser(user)) {
     if (c.req.path.startsWith("/api/")) {
       return c.json({ error: "访问已被管理员限制" }, 403);
     }
@@ -1890,32 +1929,82 @@ function regionNameZh(region: string): string {
 async function getUserBySession(db: D1Database, token: string): Promise<User | null> {
   const tokenHash = await sha256Hex(token);
   const row = await db.prepare(`
-    SELECT u.id, u.username, u.email, u.role, u.status, u.created_at, s.id AS session_id, s.expires_at
+    SELECT
+      u.id, u.username, u.email, u.role, u.status, u.created_at,
+      s.id AS session_id, s.expires_at,
+      EXISTS(SELECT 1 FROM user_groups ug WHERE ug.user_id = u.id AND ug.group_name = ?) AS is_suadmin
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > ? AND u.status != 'banned'
-  `).bind(tokenHash, nowIso()).first<SessionUser>();
+  `).bind(SUADMIN_GROUP, tokenHash, nowIso()).first<SessionUser>();
   if (!row) return null;
+  return userFromRow(row);
+}
+
+async function getUserById(db: D1Database, id: string): Promise<User | null> {
+  const row = await db.prepare(`
+    SELECT
+      id, username, email, role, status, created_at,
+      EXISTS(SELECT 1 FROM user_groups ug WHERE ug.user_id = users.id AND ug.group_name = ?) AS is_suadmin
+    FROM users
+    WHERE id = ?
+  `)
+    .bind(SUADMIN_GROUP, id)
+    .first<(User & { is_suadmin?: number | boolean })>();
+  return row ? userFromRow(row) : null;
+}
+
+function userFromRow(row: User & { is_suadmin?: number | boolean }): User {
+  const isSuAdmin = sqlBool(row.is_suadmin) && row.role === "admin";
   return {
     id: row.id,
     username: row.username,
     email: row.email,
     role: row.role,
     status: row.status,
-    created_at: row.created_at
+    created_at: row.created_at,
+    isSuAdmin,
+    groups: isSuAdmin ? [SUADMIN_GROUP] : []
   };
 }
 
-async function getUserById(db: D1Database, id: string): Promise<User | null> {
-  return db.prepare("SELECT id, username, email, role, status, created_at FROM users WHERE id = ?")
-    .bind(id)
-    .first<User>();
+function sqlBool(value: unknown): boolean {
+  return value === true || value === 1 || value === "1";
+}
+
+async function userHasGroup(db: D1Database, userId: string, groupName: string): Promise<boolean> {
+  const row = await db.prepare("SELECT 1 AS found FROM user_groups WHERE user_id = ? AND group_name = ?")
+    .bind(userId, groupName)
+    .first<{ found: number }>();
+  return Boolean(row);
+}
+
+async function setUserGroup(db: D1Database, userId: string, groupName: string, enabled: boolean): Promise<void> {
+  if (enabled) {
+    await db.prepare("INSERT OR IGNORE INTO user_groups (user_id, group_name, created_at) VALUES (?, ?, ?)")
+      .bind(userId, groupName, nowIso())
+      .run();
+    return;
+  }
+  await db.prepare("DELETE FROM user_groups WHERE user_id = ? AND group_name = ?")
+    .bind(userId, groupName)
+    .run();
 }
 
 async function isLastAdmin(db: D1Database, userId: string): Promise<boolean> {
   const row = await db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status != 'banned' AND id != ?")
     .bind(userId)
     .first<{ count: number }>();
+  return Number(row?.count ?? 0) === 0;
+}
+
+async function isLastSuAdmin(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM users u
+    JOIN user_groups ug ON ug.user_id = u.id AND ug.group_name = ?
+    WHERE u.role = 'admin' AND u.status != 'banned' AND u.id != ?
+  `).bind(SUADMIN_GROUP, userId).first<{ count: number }>();
   return Number(row?.count ?? 0) === 0;
 }
 
@@ -2018,8 +2107,11 @@ async function attachUserIpPreviews(db: D1Database, users: Record<string, unknow
       }));
     }
     previews.sort(compareIpPreview);
+    const isSuAdmin = sqlBool(user.is_suadmin);
     return {
       ...user,
+      isSuAdmin,
+      groups: isSuAdmin ? [SUADMIN_GROUP] : [],
       ip_previews: previews,
       ip_preview: previews[0]?.label ?? (user.last_ip ? `${user.last_ip}` : "未记录")
     };
@@ -2246,7 +2338,14 @@ function requireActiveUser(c: AppContext): User | Response {
 function requireAdmin(c: AppContext): User | Response {
   const user = c.get("user");
   if (!user) return c.json({ error: "需要先登录" }, 401);
-  if (user.role !== "admin") return c.json({ error: "需要管理员权限" }, 403);
+  if (!isAdminUser(user)) return c.json({ error: "需要管理员权限" }, 403);
+  return user;
+}
+
+function requireSuAdmin(c: AppContext): User | Response {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "需要先登录" }, 401);
+  if (!isSuAdminUser(user)) return c.json({ error: "需要 SUadmin 权限" }, 403);
   return user;
 }
 
@@ -2257,11 +2356,19 @@ function requireWriteAccess(c: AppContext): Response | null {
 }
 
 function isAdminRequest(c: AppContext): boolean {
-  return c.get("user")?.role === "admin";
+  return isAdminUser(c.get("user"));
+}
+
+function isAdminUser(user: User | null | undefined): boolean {
+  return user?.role === "admin";
+}
+
+function isSuAdminUser(user: User | null | undefined): boolean {
+  return isAdminUser(user) && Boolean(user?.isSuAdmin);
 }
 
 async function enforceContentWriteCooldown(c: AppContext, user: User): Promise<Response | null> {
-  if (user.role === "admin" || isAdminRequest(c)) return null;
+  if (isAdminUser(user) || isAdminRequest(c)) return null;
   const message = `发帖或回复太快了，请 ${CONTENT_WRITE_COOLDOWN_SECONDS} 秒后再试`;
   const userCooldown = await requireCooldownAvailable(c, "content_write_user", userSubject(user), message);
   if (userCooldown) return userCooldown;
@@ -3898,7 +4005,7 @@ function cleanPostCategory(value: unknown, fallback: PostCategory): PostCategory
 }
 
 function postStatusForCreate(user: User, category: PostCategory, rawStatus: unknown): PostStatus {
-  if (user.role === "admin") return cleanPostStatus(rawStatus, "published") === "draft" ? "draft" : "published";
+  if (isAdminUser(user)) return cleanPostStatus(rawStatus, "published") === "draft" ? "draft" : "published";
   if (category === "talk") return "published";
   return "pending";
 }

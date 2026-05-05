@@ -1682,6 +1682,18 @@ html.image-viewer-open body {
   gap: 4px;
 }
 
+.admin-role-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-role-cell select {
+  min-width: 92px;
+}
+
 .admin-user-main strong,
 .admin-ip-cell code {
   min-width: 0;
@@ -2629,6 +2641,14 @@ export const appScript = String.raw`
   };
   var preciseLocationBusy = false;
 
+  function isAdminUser(user) {
+    return Boolean(user && user.role === "admin");
+  }
+
+  function isSuAdminUser(user) {
+    return Boolean(user && (user.isSuAdmin || user.is_suadmin || (Array.isArray(user.groups) && user.groups.indexOf("SUadmin") >= 0)));
+  }
+
   document.addEventListener("DOMContentLoaded", init);
   window.addEventListener("hashchange", route);
   document.addEventListener("click", onEditorClick, true);
@@ -2674,9 +2694,9 @@ export const appScript = String.raw`
     if (hash !== "#/") state.search.open = false;
     if (hash !== "#/new") clearUploadPreviewUrls();
     if (hash === "#/admin/editor") {
-      if (!state.user || state.user.role !== "admin") {
+      if (!isSuAdminUser(state.user)) {
         renderHeader();
-        document.getElementById("app").innerHTML = '<div class="empty-state">需要管理员权限。</div>';
+        document.getElementById("app").innerHTML = '<div class="empty-state">需要 SUadmin 权限。</div>';
         return;
       }
       state.editor.enabled = true;
@@ -2685,7 +2705,7 @@ export const appScript = String.raw`
       location.hash = "#/";
       return;
     }
-    if (!state.user || state.user.role !== "admin") {
+    if (!isSuAdminUser(state.user)) {
       state.editor.enabled = false;
       state.editor.active = false;
       state.editor.selected = "";
@@ -2752,7 +2772,7 @@ export const appScript = String.raw`
     if (state.user) {
       userBlock =
         '<button class="ghost-button" data-action="new-post" title="发帖">' + icon("plus") + '<span>发帖</span></button>' +
-        (state.user.role === "admin" ? '<button class="ghost-button" data-action="admin" title="后台">' + icon("shield") + '<span>后台</span></button>' : "") +
+        (isAdminUser(state.user) ? '<button class="ghost-button" data-action="admin" title="后台">' + icon("shield") + '<span>后台</span></button>' : "") +
         '<button class="ghost-button" data-action="account" title="账号安全">' + icon("shield") + '<span>安全</span></button>' +
         '<button class="plain-button" data-action="logout" title="退出">' + icon("user") + '<span>' + esc(state.user.username) + '</span></button>';
     } else {
@@ -2914,14 +2934,14 @@ export const appScript = String.raw`
   }
 
   async function loadAdmin() {
-    if (!state.user || state.user.role !== "admin") {
+    if (!isAdminUser(state.user)) {
       state.admin = null;
       return;
     }
     var stats = await api("/api/admin/stats");
     var posts = await api("/api/admin/posts");
     var comments = await api("/api/admin/comments");
-    var permissions = await api("/api/admin/permissions");
+    var permissions = isSuAdminUser(state.user) ? await api("/api/admin/permissions") : { permissions: [] };
     var users = await api("/api/admin/users");
     state.admin = {
       stats: stats.stats || null,
@@ -3019,8 +3039,8 @@ export const appScript = String.raw`
   }
 
   function renderVisualEditor() {
-    if (!state.user || state.user.role !== "admin") {
-      document.getElementById("app").innerHTML = '<div class="empty-state">需要管理员权限。</div>';
+    if (!isSuAdminUser(state.user)) {
+      document.getElementById("app").innerHTML = '<div class="empty-state">需要 SUadmin 权限。</div>';
       return;
     }
     state.editor.enabled = true;
@@ -3047,7 +3067,7 @@ export const appScript = String.raw`
     applySavedOverrides();
     var oldRoot = document.getElementById("editor-toolbar-root");
     if (oldRoot) oldRoot.remove();
-    if (state.editor.enabled && state.user && state.user.role === "admin") {
+    if (state.editor.enabled && isSuAdminUser(state.user)) {
       var header = document.getElementById("site-header");
       if (header) {
         header.insertAdjacentHTML("afterend", '<div id="editor-toolbar-root" class="editor-toolbar-root">' + renderVisualToolbar() + '</div>');
@@ -3310,7 +3330,7 @@ export const appScript = String.raw`
       location.hash = "#/";
       return;
     }
-    var isAdmin = state.user && state.user.role === "admin";
+    var isAdmin = isAdminUser(state.user);
     var defaultCategory = state.filters.category === "talk" || (isAdmin && state.filters.category === "about") ? state.filters.category : "rating";
     var defaultRating = isRatingCategory(defaultCategory);
     var ratingHiddenClass = defaultRating ? "" : " hidden";
@@ -3353,7 +3373,7 @@ export const appScript = String.raw`
 
   function renderAdmin() {
     var app = document.getElementById("app");
-    if (!state.user || state.user.role !== "admin") {
+    if (!isAdminUser(state.user)) {
       app.innerHTML = '<div class="empty-state">需要管理员权限。</div>';
       return;
     }
@@ -3366,7 +3386,7 @@ export const appScript = String.raw`
         renderAdminOverview() +
         renderAdminContentManagement() +
         renderAdminUsers() +
-        renderAdminPermissions() +
+        (isSuAdminUser(state.user) ? renderAdminPermissions() : "") +
       '</section>';
   }
 
@@ -3387,7 +3407,7 @@ export const appScript = String.raw`
           return '<button class="search-chip" data-action="search-suggestion" data-query="' + escAttr(item.query) + '">' + (index + 1) + '. ' + esc(item.query) + ' · ' + esc(String(item.count)) + '</button>';
         }).join("") + '</div>' : '') +
       '</div>' +
-      '<div class="hero-actions"><button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button><button class="ghost-button" data-action="admin-export-markdown">' + icon("doc") + '<span>Markdown 备份</span></button></div>' +
+      '<div class="hero-actions">' + (isSuAdminUser(state.user) ? '<button class="primary-button" data-action="visual-editor">' + icon("doc") + '<span>图形编辑</span></button>' : '') + '<button class="ghost-button" data-action="admin-export-markdown">' + icon("doc") + '<span>Markdown 备份</span></button></div>' +
     '</div>';
   }
 
@@ -3520,7 +3540,7 @@ export const appScript = String.raw`
       var ipText = (user.ip_previews || []).map(function (item) {
         return [item.label, item.ip, item.country, item.detail, item.city, item.region].join(" ");
       }).join(" ");
-      return normalizeAdminQuery([user.username, user.email, user.role, user.status, user.last_ip, ipText].join(" ")).indexOf(needle) >= 0;
+      return normalizeAdminQuery([user.username, user.email, user.role, adminRowIsSuAdmin(user) ? "SUadmin" : "", user.status, user.last_ip, ipText].join(" ")).indexOf(needle) >= 0;
     });
   }
 
@@ -3534,6 +3554,18 @@ export const appScript = String.raw`
 
   function normalizeAdminQuery(value) {
     return String(value || "").trim().toLowerCase();
+  }
+
+  function adminRowIsSuAdmin(user) {
+    return Boolean(user && (user.isSuAdmin || user.is_suadmin || (Array.isArray(user.groups) && user.groups.indexOf("SUadmin") >= 0)));
+  }
+
+  function renderAdminUserRoleControl(user) {
+    var badge = adminRowIsSuAdmin(user) ? '<span class="status-pill">SUadmin</span>' : '';
+    if (!isSuAdminUser(state.user)) {
+      return '<div class="admin-role-cell"><span class="status-pill">' + esc(user.role || "user") + '</span>' + badge + '</div>';
+    }
+    return '<div class="admin-role-cell"><select data-action="user-role" data-id="' + escAttr(user.id) + '"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select>' + badge + '</div>';
   }
 
   function renderAdminUsers() {
@@ -3556,11 +3588,11 @@ export const appScript = String.raw`
       '<div class="admin-user-main"><strong>' + esc(u.username) + '</strong><span class="admin-subline">' + esc(u.email) + '</span></div>' +
       renderAdminUserIps(u) +
       '<span class="admin-subline">' + esc(u.session_count || 0) + ' 个会话</span>' +
-      '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
+      renderAdminUserRoleControl(u) +
       '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
       '<div class="table-actions">' +
         '<button class="danger-button" data-action="admin-ban-user" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban人</span></button>' +
-        '<button class="danger-button" data-action="admin-ban-ip" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban IP</span></button>' +
+        (isSuAdminUser(state.user) ? '<button class="danger-button" data-action="admin-ban-ip" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban IP</span></button>' : '') +
         '<button class="ghost-button" data-action="admin-edit-user" data-id="' + escAttr(u.id) + '">' + icon("doc") + '<span>编辑</span></button>' +
         '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
         '<button class="danger-button" data-action="admin-delete-user" data-id="' + escAttr(u.id) + '">' + icon("trash") + '<span>删除</span></button>' +
@@ -3665,6 +3697,10 @@ export const appScript = String.raw`
     if (action === "new-post") location.hash = "#/new";
     if (action === "admin") location.hash = "#/admin";
     if (action === "visual-editor") {
+      if (!isSuAdminUser(state.user)) {
+        toast("需要 SUadmin 权限");
+        return;
+      }
       state.editor.enabled = true;
       state.editor.active = false;
       state.editor.selected = "";
@@ -3768,7 +3804,10 @@ export const appScript = String.raw`
     if (action === "admin-save-comment") await saveAdminComment(target);
     if (action === "admin-delete-post") await adminDelete("/api/admin/posts/" + target.getAttribute("data-id"));
     if (action === "admin-delete-comment") await adminDeleteComment(target.getAttribute("data-id"), target.getAttribute("data-post-id"));
-    if (action === "admin-delete-permission") await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
+    if (action === "admin-delete-permission") {
+      if (!isSuAdminUser(state.user)) return toast("需要 SUadmin 权限");
+      await adminDelete("/api/admin/permissions/" + target.getAttribute("data-id"));
+    }
     if (action === "admin-edit-user") showAdminUserEditor(target.getAttribute("data-id"));
     if (action === "admin-ban-user") await adminBanUser(target.getAttribute("data-id"));
     if (action === "admin-ban-ip") await adminBanIp(target.getAttribute("data-id"));
@@ -4347,6 +4386,7 @@ export const appScript = String.raw`
 
   async function saveElementUi(form) {
     try {
+      if (!isSuAdminUser(state.user)) throw new Error("需要 SUadmin 权限");
       await prepareElementImageUpload(form);
       var override = collectElementOverride(form);
       if (!override.selector) throw new Error("没有选中元素");
@@ -4380,6 +4420,7 @@ export const appScript = String.raw`
 
   async function resetSelectedElementUi() {
     try {
+      if (!isSuAdminUser(state.user)) throw new Error("需要 SUadmin 权限");
       var form = document.getElementById("ui-element-form");
       if (!form) return;
       var selector = String(new FormData(form).get("selector") || "").trim();
@@ -4399,6 +4440,7 @@ export const appScript = String.raw`
 
   async function clearAllEditorOverrides() {
     try {
+      if (!isSuAdminUser(state.user)) throw new Error("需要 SUadmin 权限");
       if (!confirm("清空所有图形编辑保存的样式和文字覆盖？")) return;
       var saved = await api("/api/admin/site-settings", { method: "PATCH", body: { ui: currentUiPayload([]) } });
       applyUiConfig(saved.ui);
@@ -4457,6 +4499,7 @@ export const appScript = String.raw`
     }
     if (event.target.id === "permission-form") {
       event.preventDefault();
+      if (!isSuAdminUser(state.user)) return toast("需要 SUadmin 权限");
       await createPermission(event.target);
       return;
     }
@@ -4554,6 +4597,11 @@ export const appScript = String.raw`
     }
     var action = target.getAttribute && target.getAttribute("data-action");
     if (action === "user-role") {
+      if (!isSuAdminUser(state.user)) {
+        toast("需要 SUadmin 权限");
+        await route();
+        return;
+      }
       await api("/api/admin/users/" + target.getAttribute("data-id"), { method: "PATCH", body: { role: target.value } });
       toast("角色已更新");
       await route();
@@ -4880,6 +4928,7 @@ export const appScript = String.raw`
 
   async function createPermission(form) {
     try {
+      if (!isSuAdminUser(state.user)) throw new Error("需要 SUadmin 权限");
       await api("/api/admin/permissions", { method: "POST", body: Object.fromEntries(new FormData(form)) });
       form.reset();
       toast("规则已添加");
@@ -4890,6 +4939,10 @@ export const appScript = String.raw`
   }
 
   function showSearchEditor() {
+    if (!isSuAdminUser(state.user)) {
+      toast("需要 SUadmin 权限");
+      return;
+    }
     showModal(
       '<div class="modal">' +
         '<div class="modal-head"><h2>编辑搜索栏</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
@@ -4910,6 +4963,7 @@ export const appScript = String.raw`
 
   async function saveSearchUi(form) {
     try {
+      if (!isSuAdminUser(state.user)) throw new Error("需要 SUadmin 权限");
       var data = new FormData(form);
       var width = Number(data.get("searchWidthNumber") || data.get("searchWidthPx"));
       var payload = {
@@ -5118,6 +5172,13 @@ export const appScript = String.raw`
       toast("用户不存在");
       return;
     }
+    var canEditPrivilege = isSuAdminUser(state.user);
+    var roleField = canEditPrivilege
+      ? '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>'
+      : '<div class="field"><label>角色</label><div class="admin-role-cell"><span class="status-pill">' + esc(user.role || "user") + '</span>' + (adminRowIsSuAdmin(user) ? '<span class="status-pill">SUadmin</span>' : '') + '</div></div>';
+    var suAdminField = canEditPrivilege
+      ? '<label class="post-meta"><input name="suadmin" type="checkbox" ' + (adminRowIsSuAdmin(user) ? "checked" : "") + '> SUadmin 身份组（可图形管理、任命管理员、设置规则）</label>'
+      : '';
     showModal(
       '<div class="modal">' +
         '<div class="modal-head"><h2>编辑用户</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
@@ -5127,9 +5188,10 @@ export const appScript = String.raw`
             '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
             '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">允许定位时显示浏览器精确坐标；拒绝时显示 Cloudflare IP 城市。Ban IP 会封禁该用户全部已记录 IP 指纹；仅中国大陆 IP 会优先显示，香港不按中国大陆 IP 处理。</span></div>' +
             '<div class="two-col">' +
-              '<div class="field"><label>角色</label><select name="role"><option value="user" ' + selected(user.role, "user") + '>user</option><option value="admin" ' + selected(user.role, "admin") + '>admin</option></select></div>' +
+              roleField +
               '<div class="field"><label>状态</label><select name="status"><option value="active" ' + selected(user.status, "active") + '>active</option><option value="muted" ' + selected(user.status, "muted") + '>muted</option><option value="banned" ' + selected(user.status, "banned") + '>banned</option></select></div>' +
             '</div>' +
+            suAdminField +
             '<div class="hero-actions"><button class="primary-button" type="submit">' + icon("doc") + '<span>保存用户</span></button><button class="ghost-button" type="button" data-action="close-modal">取消</button></div>' +
           '</form>' +
         '</div>' +
@@ -5206,14 +5268,18 @@ export const appScript = String.raw`
   async function saveAdminUser(form) {
     try {
       var formData = new FormData(form);
+      var body = {
+        username: formData.get("username"),
+        email: formData.get("email"),
+        status: formData.get("status")
+      };
+      if (isSuAdminUser(state.user)) {
+        body.role = formData.get("role");
+        body.suadmin = formData.get("suadmin") === "on";
+      }
       await api("/api/admin/users/" + form.getAttribute("data-id"), {
         method: "PATCH",
-        body: {
-          username: formData.get("username"),
-          email: formData.get("email"),
-          role: formData.get("role"),
-          status: formData.get("status")
-        }
+        body: body
       });
       closeModal();
       toast("用户已保存");
@@ -5235,6 +5301,7 @@ export const appScript = String.raw`
 
   async function adminBanIp(userId) {
     try {
+      if (!isSuAdminUser(state.user)) throw new Error("需要 SUadmin 权限");
       await api("/api/admin/users/" + userId + "/ban-ip", { method: "POST" });
       toast("已 Ban 该用户最近 IP");
       await route();
@@ -5304,7 +5371,6 @@ export const appScript = String.raw`
     return '<form id="register-form" class="form-grid">' +
       '<div class="two-col"><div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="15" required></div><div class="field"><label>邮箱</label><input name="email" type="email" autocomplete="email" required></div></div>' +
       '<div class="field"><label>密码</label><input name="password" type="password" minlength="10" autocomplete="new-password" required><span class="field-hint">至少 10 位，包含大小写字母、数字、符号中的 3 类。</span></div>' +
-      '<div class="field"><label>管理员邀请码</label><input name="inviteCode" placeholder="普通用户可留空"></div>' +
       '<button class="primary-button" type="submit">' + icon("plus") + '<span>注册</span></button>' +
     '</form>';
   }
