@@ -1104,6 +1104,12 @@ app.post("/api/posts/:id/comments", async (c) => {
   if (content.length < 2) return c.json({ error: "回复太短了" }, 400);
   const post = await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'").bind(postId).first();
   if (!post) return c.json({ error: "帖子不存在" }, 404);
+  if (parentId) {
+    const parent = await c.env.DB.prepare("SELECT id FROM comments WHERE id = ? AND post_id = ? AND status = 'published'")
+      .bind(parentId, postId)
+      .first();
+    if (!parent) return c.json({ error: "要回复的评论不存在" }, 404);
+  }
   const cooldown = await enforceCommentWriteCooldown(c);
   if (cooldown) return cooldown;
 
@@ -1185,7 +1191,7 @@ app.get("/api/admin/posts", async (c) => {
       CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END,
       p.pinned_at DESC,
       p.created_at DESC
-    LIMIT 100
+    LIMIT 300
   `).all<Record<string, unknown>>();
   return c.json({ posts: result.results ?? [] });
 });
@@ -1332,12 +1338,17 @@ app.get("/api/admin/comments", async (c) => {
   const user = requireAdmin(c);
   if (user instanceof Response) return user;
   const result = await c.env.DB.prepare(`
-    SELECT cm.id, cm.content, cm.status, cm.created_at, cm.visitor_id, COALESCE(p.title, '已删除帖子') AS post_title, u.username AS author_name
+    SELECT
+      cm.id, cm.post_id, cm.parent_id, cm.content, cm.status, cm.created_at, cm.visitor_id,
+      COALESCE(p.title, '已删除帖子') AS post_title,
+      p.slug AS post_slug,
+      p.category AS post_category,
+      u.username AS author_name
     FROM comments cm
     LEFT JOIN posts p ON p.id = cm.post_id
     LEFT JOIN users u ON u.id = cm.author_id
-    ORDER BY cm.created_at DESC
-    LIMIT 100
+    ORDER BY COALESCE(p.updated_at, cm.created_at) DESC, cm.created_at DESC
+    LIMIT 300
   `).all<Record<string, unknown>>();
   return c.json({ comments: result.results ?? [] });
 });

@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260504-search-results-mobile";
+export const ASSET_VERSION = "20260505-admin-comments-footer";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
@@ -54,6 +54,11 @@ export function renderPage(meta: PageMeta = {}): string {
     <div class="shell">
       <header id="site-header" class="site-header"></header>
       <main id="app" class="app-main" tabindex="-1">${staticHtml}</main>
+      <footer class="site-footer">
+        <span>NoMTF 不药娘网</span>
+        <a href="https://t.me/NoMTF_bot" target="_blank" rel="noopener noreferrer">投稿机器人</a>
+        <a href="https://x.com/wenyutang1019" target="_blank" rel="noopener noreferrer">站长 Yuwen（@wenyutang1019）</a>
+      </footer>
     </div>
   </body>
 </html>`;
@@ -431,6 +436,34 @@ a { color: inherit; }
   margin: 0 auto;
   padding: 30px 0 56px;
   min-width: 0;
+}
+
+.site-footer {
+  width: min(1180px, calc(100vw - 32px));
+  margin: -28px auto 0;
+  padding: 0 0 34px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.site-footer a {
+  color: #2c628f;
+  text-decoration: none;
+  border: 1px solid #cfe3f6;
+  border-radius: 8px;
+  background: rgba(255,255,255,.72);
+  padding: 7px 10px;
+}
+
+.site-footer a:hover {
+  border-color: #9fd7f7;
+  background: #f3faff;
 }
 
 .hero {
@@ -1166,9 +1199,46 @@ html.image-viewer-open body {
   padding-top: 12px;
 }
 
+.comment.is-child {
+  margin-left: 18px;
+  padding-left: 12px;
+  border-left: 3px solid #d7ecfb;
+}
+
 .comment p {
   margin: 6px 0 0;
   overflow-wrap: anywhere;
+}
+
+.comment-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.comment-actions .plain-button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.comment-children {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.reply-context {
+  border: 1px solid #cfe3f6;
+  border-radius: 8px;
+  background: #f3faff;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #2c628f;
+  font-weight: 850;
 }
 
 .form-grid {
@@ -1483,6 +1553,87 @@ html.image-viewer-open body {
   gap: 8px;
 }
 
+.admin-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.admin-section-head .section-title {
+  margin-bottom: 4px;
+}
+
+.admin-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: min(420px, 100%);
+}
+
+.admin-search {
+  width: min(360px, 100%);
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,.9);
+  color: var(--ink);
+  padding: 8px 11px;
+  outline: 0;
+}
+
+.admin-search:focus {
+  border-color: #9fd7f7;
+  box-shadow: 0 0 0 3px rgba(117, 199, 255, .22);
+}
+
+.admin-fold,
+.admin-comment-group {
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: rgba(255,255,255,.82);
+  overflow: hidden;
+}
+
+.admin-fold {
+  background: rgba(248,251,255,.72);
+}
+
+.admin-fold summary,
+.admin-comment-group summary {
+  cursor: pointer;
+  padding: 11px 12px;
+  font-weight: 900;
+  color: #2c3548;
+  list-style-position: inside;
+}
+
+.admin-fold .table,
+.admin-comment-group .table {
+  padding: 0 12px 12px;
+}
+
+.admin-comment-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-comment-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.admin-comment-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .table-row {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) 130px 120px auto;
@@ -1720,6 +1871,14 @@ svg {
     width: min(100vw - 16px, 1180px);
     padding-top: 10px;
     padding-bottom: calc(44px + env(safe-area-inset-bottom));
+  }
+
+  .site-footer {
+    width: min(100vw - 16px, 1180px);
+    margin-top: -28px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    justify-content: flex-start;
+    font-size: 12px;
   }
 
   .nav-actions {
@@ -2183,6 +2342,27 @@ svg {
     padding: 12px 4px;
   }
 
+  .admin-section-head {
+    display: grid;
+    gap: 10px;
+  }
+
+  .admin-tools,
+  .admin-search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-fold .table,
+  .admin-comment-group .table {
+    padding: 0 8px 10px;
+  }
+
+  .comment.is-child {
+    margin-left: 8px;
+    padding-left: 10px;
+  }
+
   .admin-section h1 {
     margin-top: 0;
     font-size: 30px;
@@ -2373,6 +2553,10 @@ export const appScript = String.raw`
     post: null,
     comments: [],
     admin: null,
+    adminUi: {
+      postQuery: "",
+      commentQuery: ""
+    },
     search: {
       open: false,
       history: [],
@@ -3029,6 +3213,8 @@ export const appScript = String.raw`
 
   function renderCommentForm(postId) {
     return '<form id="comment-form" class="form-grid" data-post-id="' + escAttr(postId) + '">' +
+      '<input type="hidden" name="parentId" value="">' +
+      '<div id="reply-context" class="reply-context hidden"><span>正在回复 <strong></strong></span><button class="plain-button" type="button" data-action="cancel-reply">取消回复</button></div>' +
       '<div class="field"><textarea name="content" maxlength="200" required placeholder="写一条回复（最多 200 字，间隔 5 秒）"></textarea></div>' +
       '<div><button class="primary-button" type="submit">' + icon("comment") + '<span>发送回复</span></button></div>' +
     '</form>';
@@ -3036,12 +3222,64 @@ export const appScript = String.raw`
 
   function renderComments() {
     if (!state.comments.length) return '<div class="empty-state">还没有回复。</div>';
-    return state.comments.map(function (item) {
-      return '<article class="comment">' +
-        '<div class="post-meta"><strong>' + esc(item.authorName) + '</strong><span>' + dateText(item.createdAt) + '</span></div>' +
-        '<p>' + esc(item.content) + '</p>' +
-      '</article>';
+    return buildCommentTree(state.comments).map(function (item) {
+      return renderCommentNode(item, 0);
     }).join("");
+  }
+
+  function buildCommentTree(comments) {
+    var byId = {};
+    var roots = [];
+    comments.forEach(function (item) {
+      item.children = [];
+      byId[item.id] = item;
+    });
+    comments.forEach(function (item) {
+      var parent = item.parentId && byId[item.parentId] ? byId[item.parentId] : null;
+      if (parent) parent.children.push(item);
+      else roots.push(item);
+    });
+    return roots;
+  }
+
+  function renderCommentNode(item, depth) {
+    var children = (item.children || []).map(function (child) {
+      return renderCommentNode(child, depth + 1);
+    }).join("");
+    return '<article class="comment' + (depth > 0 ? ' is-child' : '') + '" data-comment-id="' + escAttr(item.id) + '">' +
+      '<div class="post-meta"><strong>' + esc(item.authorName) + '</strong><span>' + dateText(item.createdAt) + '</span></div>' +
+      '<p>' + esc(item.content) + '</p>' +
+      '<div class="comment-actions"><button class="plain-button" type="button" data-action="reply-comment" data-id="' + escAttr(item.id) + '" data-author="' + escAttr(item.authorName) + '">' + icon("comment") + '<span>回复</span></button></div>' +
+      (children ? '<div class="comment-children">' + children + '</div>' : '') +
+    '</article>';
+  }
+
+  function setReplyTarget(commentId, authorName) {
+    var form = document.getElementById("comment-form");
+    if (!form || !commentId) return;
+    var input = form.querySelector('input[name="parentId"]');
+    var context = document.getElementById("reply-context");
+    var label = context ? context.querySelector("strong") : null;
+    var textarea = form.querySelector("textarea");
+    if (input) input.value = commentId;
+    if (label) label.textContent = authorName || "匿名";
+    if (context) context.classList.remove("hidden");
+    if (textarea) {
+      textarea.placeholder = "回复 @" + (authorName || "匿名") + "（最多 200 字，间隔 5 秒）";
+      textarea.focus();
+    }
+    form.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function clearReplyTarget() {
+    var form = document.getElementById("comment-form");
+    if (!form) return;
+    var input = form.querySelector('input[name="parentId"]');
+    var context = document.getElementById("reply-context");
+    var textarea = form.querySelector("textarea");
+    if (input) input.value = "";
+    if (context) context.classList.add("hidden");
+    if (textarea) textarea.placeholder = "写一条回复（最多 200 字，间隔 5 秒）";
   }
 
   function renderComposePage() {
@@ -3138,16 +3376,28 @@ export const appScript = String.raw`
   }
 
   function renderAdminPosts() {
-    return '<section class="page-section admin-section"><h2 class="section-title">投稿审核</h2><div class="table">' +
-      state.admin.posts.map(function (p) {
-        var isRating = isRatingCategory(p.category);
-        return '<div class="table-row admin-post-row">' +
-          '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + ' · 浏览 ' + esc(String(p.view_count || 0)) + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
-          '<span>' + categoryText(p.category) + (isRating ? ' · 等级 ' + esc(String(p.hazard_level)) : '') + (p.pinned_at ? ' · 置顶' : '') + '</span>' +
-          '<span class="status-pill">' + statusText(p.status) + '</span>' +
-          '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="ghost-button" data-action="' + (p.pinned_at ? 'admin-unpin-post' : 'admin-pin-post') + '" data-id="' + escAttr(p.id) + '">' + icon("pin") + '<span>' + (p.pinned_at ? '取消置顶' : '置顶') + '</span></button><button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
-        '</div>';
-      }).join("") + '</div></section>';
+    var query = state.adminUi.postQuery || "";
+    var posts = filterAdminPosts(state.admin.posts || [], query);
+    var visible = posts.slice(0, 5);
+    var folded = posts.slice(5);
+    return '<section class="page-section admin-section">' +
+      '<div class="admin-section-head">' +
+        '<div><h2 class="section-title">投稿审核</h2><p class="admin-subline">匹配 ' + esc(String(posts.length)) + ' 篇，先显示前 5 篇，剩下折叠。</p></div>' +
+        '<div class="admin-tools"><input class="admin-search" data-admin-filter="posts" type="search" placeholder="搜索标题、作者、分类、状态" value="' + escAttr(query) + '"></div>' +
+      '</div>' +
+      (posts.length ? '<div class="table">' + visible.map(adminPostRow).join("") + '</div>' : '<div class="empty-state">没有匹配的帖子。</div>') +
+      (folded.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(folded.length)) + ' 篇帖子</summary><div class="table">' + folded.map(adminPostRow).join("") + '</div></details>' : '') +
+    '</section>';
+  }
+
+  function adminPostRow(p) {
+    var isRating = isRatingCategory(p.category);
+    return '<div class="table-row admin-post-row">' +
+      '<div><strong>' + esc(p.title) + '</strong><span class="admin-meta">' + esc(p.author_name || "匿名") + ' · 浏览 ' + esc(String(p.view_count || 0)) + (p.summary ? ' · ' + esc(excerpt(p.summary, 46)) : '') + '</span></div>' +
+      '<span>' + categoryText(p.category) + (isRating ? ' · 等级 ' + esc(String(p.hazard_level)) : '') + (p.pinned_at ? ' · 置顶' : '') + '</span>' +
+      '<span class="status-pill">' + statusText(p.status) + '</span>' +
+      '<div class="table-actions"><button class="ghost-button" data-action="admin-edit-post" data-id="' + escAttr(p.id) + '">' + icon("doc") + '<span>编辑</span></button>' + renderPostReviewActions(p) + '<button class="ghost-button" data-action="' + (p.pinned_at ? 'admin-unpin-post' : 'admin-pin-post') + '" data-id="' + escAttr(p.id) + '">' + icon("pin") + '<span>' + (p.pinned_at ? '取消置顶' : '置顶') + '</span></button><button class="danger-button" data-action="admin-delete-post" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button></div>' +
+    '</div>';
   }
 
   function renderPostReviewActions(post) {
@@ -3162,6 +3412,10 @@ export const appScript = String.raw`
   }
 
   function statusText(status) {
+    return esc(statusTextPlain(status));
+  }
+
+  function statusTextPlain(status) {
     var map = {
       pending: "待审核",
       published: "已公开",
@@ -3170,7 +3424,7 @@ export const appScript = String.raw`
       draft: "草稿",
       deleted: "已删除"
     };
-    return esc(map[status] || status || "");
+    return map[status] || status || "";
   }
 
   function categoryText(category) {
@@ -3183,15 +3437,67 @@ export const appScript = String.raw`
   }
 
   function renderAdminComments() {
-    return '<section class="page-section admin-section"><h2 class="section-title">回复</h2><div class="table">' +
-      state.admin.comments.map(function (cm) {
-        return '<div class="table-row">' +
-          '<span>' + esc(excerpt(cm.content, 80)) + '<span class="admin-meta">' + esc(cm.post_title || "已删除帖子") + '</span></span>' +
-          '<span>' + esc(cm.author_name || "匿名") + '</span>' +
-          '<span class="status-pill">' + esc(cm.status) + '</span>' +
-          '<button class="danger-button" data-action="admin-delete-comment" data-id="' + escAttr(cm.id) + '">' + icon("trash") + '<span>删除</span></button>' +
-        '</div>';
-      }).join("") + '</div></section>';
+    var query = state.adminUi.commentQuery || "";
+    var comments = filterAdminComments(state.admin.comments || [], query);
+    var groups = groupAdminComments(comments);
+    return '<section class="page-section admin-section">' +
+      '<div class="admin-section-head">' +
+        '<div><h2 class="section-title">回复</h2><p class="admin-subline">按文章分组，点击文章标题展开；匹配 ' + esc(String(comments.length)) + ' 条。</p></div>' +
+        '<div class="admin-tools"><input class="admin-search" data-admin-filter="comments" type="search" placeholder="搜索评论、文章、作者、状态" value="' + escAttr(query) + '"></div>' +
+      '</div>' +
+      (groups.length ? '<div class="admin-comment-groups">' + groups.map(function (group, index) {
+        return '<details class="admin-comment-group" ' + (query && index < 5 ? 'open' : '') + '>' +
+          '<summary><span class="admin-comment-title"><span>' + esc(group.title) + '</span><span class="status-pill">' + esc(String(group.comments.length)) + '</span></span></summary>' +
+          '<div class="table">' + group.comments.map(adminCommentRow).join("") + '</div>' +
+        '</details>';
+      }).join("") + '</div>' : '<div class="empty-state">没有匹配的回复。</div>') +
+    '</section>';
+  }
+
+  function adminCommentRow(cm) {
+    return '<div class="table-row">' +
+      '<span>' + esc(excerpt(cm.content, 80)) + '<span class="admin-meta">' + esc(cm.parent_id ? "回复评论" : "顶层评论") + ' · ' + esc(dateText(cm.created_at)) + '</span></span>' +
+      '<span>' + esc(cm.author_name || "匿名") + '</span>' +
+      '<span class="status-pill">' + esc(cm.status) + '</span>' +
+      '<div class="table-actions">' +
+        (cm.post_slug ? '<button class="ghost-button" data-action="open-post" data-slug="' + escAttr(cm.post_slug) + '">' + icon("doc") + '<span>查看文章</span></button>' : '') +
+        '<button class="danger-button" data-action="admin-delete-comment" data-id="' + escAttr(cm.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function filterAdminPosts(posts, query) {
+    var needle = normalizeAdminQuery(query);
+    if (!needle) return posts;
+    return posts.filter(function (p) {
+      return normalizeAdminQuery([p.title, p.slug, p.summary, p.author_name, p.category, statusTextPlain(p.status), p.hazard_level].join(" ")).indexOf(needle) >= 0;
+    });
+  }
+
+  function filterAdminComments(comments, query) {
+    var needle = normalizeAdminQuery(query);
+    if (!needle) return comments;
+    return comments.filter(function (cm) {
+      return normalizeAdminQuery([cm.content, cm.post_title, cm.author_name, cm.status, cm.created_at].join(" ")).indexOf(needle) >= 0;
+    });
+  }
+
+  function groupAdminComments(comments) {
+    var map = {};
+    var groups = [];
+    comments.forEach(function (cm) {
+      var key = cm.post_id || cm.post_title || "deleted";
+      if (!map[key]) {
+        map[key] = { title: cm.post_title || "已删除帖子", comments: [] };
+        groups.push(map[key]);
+      }
+      map[key].comments.push(cm);
+    });
+    return groups;
+  }
+
+  function normalizeAdminQuery(value) {
+    return String(value || "").trim().toLowerCase();
   }
 
   function renderAdminUsers() {
@@ -3378,6 +3684,14 @@ export const appScript = String.raw`
       }
     }
     if (action === "like") await likePost(target.getAttribute("data-id"));
+    if (action === "reply-comment") {
+      setReplyTarget(target.getAttribute("data-id"), target.getAttribute("data-author"));
+      return;
+    }
+    if (action === "cancel-reply") {
+      clearReplyTarget();
+      return;
+    }
     if (action === "close-modal") {
       restoreEditorPreview();
       closeModal();
@@ -4107,6 +4421,22 @@ export const appScript = String.raw`
 
   function onInput(event) {
     if (!event.target.closest) return;
+    var adminFilter = event.target.closest("[data-admin-filter]");
+    if (adminFilter && state.admin) {
+      var kind = adminFilter.getAttribute("data-admin-filter");
+      var value = String(adminFilter.value || "");
+      if (kind === "posts") state.adminUi.postQuery = value;
+      if (kind === "comments") state.adminUi.commentQuery = value;
+      renderAdmin();
+      requestAnimationFrame(function () {
+        var next = document.querySelector('[data-admin-filter="' + kind + '"]');
+        if (next) {
+          next.focus();
+          try { next.setSelectionRange(value.length, value.length); } catch (_) {}
+        }
+      });
+      return;
+    }
     var searchForm = event.target.closest("#ui-search-form");
     if (searchForm) {
       var data = new FormData(searchForm);
