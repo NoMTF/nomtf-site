@@ -178,7 +178,8 @@ const SESSION_COOKIE = "nomtf_sid";
 const VISITOR_COOKIE = "nomtf_vid";
 const TERMS_VERSION = "2026-04-28";
 const MAX_POST_BYTES = 80_000;
-const MAX_COMMENT_LENGTH = 200;
+const MAX_COMMENT_LENGTH = 100;
+const MAX_DISPLAY_NAME_LENGTH = 15;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_MULTIPART_IMAGE_BYTES = MAX_IMAGE_BYTES + 1024 * 1024;
 const MAX_TELEGRAM_BODY_IMAGES = 10;
@@ -420,8 +421,8 @@ app.post("/api/register", async (c) => {
   const password = String(body.password ?? "");
   const inviteCode = String(body.inviteCode ?? "");
 
-  if (!username || username.length < 2 || username.length > 24) {
-    return c.json({ error: "昵称需要 2-24 个字符" }, 400);
+  if (!username || username.length < 2 || username.length > MAX_DISPLAY_NAME_LENGTH) {
+    return c.json({ error: `昵称需要 2-${MAX_DISPLAY_NAME_LENGTH} 个字符` }, 400);
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return c.json({ error: "邮箱格式不对" }, 400);
@@ -932,7 +933,7 @@ app.post("/api/submissions", async (c) => {
   const nsfw = Boolean(body.nsfw);
   const requestedSlug = cleanText(body.slug, 90);
   const coverKey = optionalR2Key(body.coverKey ?? body.cover_key);
-  const submitterName = cleanName(body.submitterName ?? body.submitter_name).slice(0, 40);
+  const submitterName = cleanName(body.submitterName ?? body.submitter_name).slice(0, MAX_DISPLAY_NAME_LENGTH);
   const tags = cleanTags(body.tags);
   if (category === "about") return c.json({ error: "关于页只能由管理员在后台发布" }, 403);
   if (!title || title.length < 2) return c.json({ error: "标题太短了" }, 400);
@@ -1097,7 +1098,7 @@ app.post("/api/posts/:id/comments", async (c) => {
   const postId = c.req.param("id");
   const body = await readJson(c);
   const rawContent = String(body.content ?? "").trim();
-  if (rawContent.length > MAX_COMMENT_LENGTH) return c.json({ error: "评论最多 200 字" }, 400);
+  if (rawContent.length > MAX_COMMENT_LENGTH) return c.json({ error: `评论最多 ${MAX_COMMENT_LENGTH} 字` }, 400);
   const content = cleanText(rawContent, MAX_COMMENT_LENGTH);
   const parentId = typeof body.parentId === "string" && body.parentId ? body.parentId : null;
 
@@ -1386,8 +1387,8 @@ app.patch("/api/admin/users/:id", async (c) => {
   if (!status && !role && username === null && email === null) return c.json({ error: "没有可更新字段" }, 400);
   if (c.req.param("id") === admin.id && status === "banned") return c.json({ error: "不能封禁自己" }, 400);
   if (c.req.param("id") === admin.id && role === "user") return c.json({ error: "不能移除自己的管理员权限" }, 400);
-  if (username !== null && (username.length < 2 || username.length > 24)) {
-    return c.json({ error: "昵称需要 2-24 个字符" }, 400);
+  if (username !== null && (username.length < 2 || username.length > MAX_DISPLAY_NAME_LENGTH)) {
+    return c.json({ error: `昵称需要 2-${MAX_DISPLAY_NAME_LENGTH} 个字符` }, 400);
   }
   if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return c.json({ error: "邮箱格式不对" }, 400);
@@ -2708,7 +2709,7 @@ async function handleTelegramCallback(env: Env, callback: TelegramCallbackQuery)
   if (data.startsWith("tg:cat:")) {
     const category = data.endsWith(":talk") ? "talk" : "rating";
     await saveTelegramSession(env.DB, chatId, "submitterName", { category });
-    await sendTelegramMessage(env, chatId, `已选择：${categoryTextForTelegram(category)}\n\n请先发送投稿者署名（2-40 字，会显示在网站作者位置；可以填“匿名”）。`, cancelKeyboard());
+    await sendTelegramMessage(env, chatId, `已选择：${categoryTextForTelegram(category)}\n\n请先发送投稿者署名（2-${MAX_DISPLAY_NAME_LENGTH} 字，会显示在网站作者位置；可以填“匿名”）。`, cancelKeyboard());
     return;
   }
 
@@ -2855,9 +2856,9 @@ async function handleTelegramTextStep(env: Env, chatId: string, session: Telegra
   }
 
   if (session.step === "submitterName") {
-    const submitterName = cleanName(text).slice(0, 40);
+    const submitterName = cleanName(text).slice(0, MAX_DISPLAY_NAME_LENGTH);
     if (submitterName.length < 2) {
-      await sendTelegramMessage(env, chatId, "署名太短了，请发送 2-40 字；想匿名就发“匿名”。", cancelKeyboard());
+      await sendTelegramMessage(env, chatId, `署名太短了，请发送 2-${MAX_DISPLAY_NAME_LENGTH} 字；想匿名就发“匿名”。`, cancelKeyboard());
       return;
     }
     draft.submitterName = submitterName;
@@ -2979,7 +2980,7 @@ function telegramDraftToSubmissionInput(draft: TelegramDraft): SubmissionInput {
   const bodyImageKeys = cleanR2Keys(draft.bodyImageKeys ?? []);
   const content = cleanText(appendImageKeysToContent(draft.content ?? "", bodyImageKeys), MAX_POST_BYTES);
   const title = cleanText(draft.title, 120);
-  const submitterName = cleanName(draft.submitterName).slice(0, 40) || "匿名投稿者";
+  const submitterName = cleanName(draft.submitterName).slice(0, MAX_DISPLAY_NAME_LENGTH) || "匿名投稿者";
   if (title.length < 2) throw new Error("标题太短");
   if (content.length < 10) throw new Error("正文至少 10 个字符");
 

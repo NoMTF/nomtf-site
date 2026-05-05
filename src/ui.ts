@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260505-admin-comments-footer";
+export const ASSET_VERSION = "20260505-short-comment-name";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
@@ -3215,7 +3215,7 @@ export const appScript = String.raw`
     return '<form id="comment-form" class="form-grid" data-post-id="' + escAttr(postId) + '">' +
       '<input type="hidden" name="parentId" value="">' +
       '<div id="reply-context" class="reply-context hidden"><span>正在回复 <strong></strong></span><button class="plain-button" type="button" data-action="cancel-reply">取消回复</button></div>' +
-      '<div class="field"><textarea name="content" maxlength="200" required placeholder="写一条回复（最多 200 字，间隔 5 秒）"></textarea></div>' +
+      '<div class="field"><textarea name="content" maxlength="100" required placeholder="写一条回复（最多 100 字，间隔 5 秒）"></textarea></div>' +
       '<div><button class="primary-button" type="submit">' + icon("comment") + '<span>发送回复</span></button></div>' +
     '</form>';
   }
@@ -3265,7 +3265,7 @@ export const appScript = String.raw`
     if (label) label.textContent = authorName || "匿名";
     if (context) context.classList.remove("hidden");
     if (textarea) {
-      textarea.placeholder = "回复 @" + (authorName || "匿名") + "（最多 200 字，间隔 5 秒）";
+      textarea.placeholder = "回复 @" + (authorName || "匿名") + "（最多 100 字，间隔 5 秒）";
       textarea.focus();
     }
     form.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -3279,7 +3279,7 @@ export const appScript = String.raw`
     var textarea = form.querySelector("textarea");
     if (input) input.value = "";
     if (context) context.classList.add("hidden");
-    if (textarea) textarea.placeholder = "写一条回复（最多 200 字，间隔 5 秒）";
+    if (textarea) textarea.placeholder = "写一条回复（最多 100 字，间隔 5 秒）";
   }
 
   function renderComposePage() {
@@ -4984,7 +4984,7 @@ export const appScript = String.raw`
         '<div class="modal-head"><h2>编辑用户</h2><button class="plain-button" data-action="close-modal">关闭</button></div>' +
         '<div class="modal-body">' +
           '<form id="admin-user-edit-form" class="form-grid" data-id="' + escAttr(user.id) + '">' +
-            '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required value="' + escAttr(user.username || "") + '"></div>' +
+            '<div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="15" required value="' + escAttr(user.username || "") + '"></div>' +
             '<div class="field"><label>邮箱</label><input name="email" type="email" required value="' + escAttr(user.email || "") + '"></div>' +
             '<div class="field"><label>IP 位置预览</label><div class="admin-ip-cell">' + renderAdminUserIpLines(user) + '</div><span class="field-hint">允许定位时显示浏览器精确坐标；拒绝时显示 Cloudflare IP 城市。Ban IP 会封禁该用户全部已记录 IP 指纹；仅中国大陆 IP 会优先显示，香港不按中国大陆 IP 处理。</span></div>' +
             '<div class="two-col">' +
@@ -5163,7 +5163,7 @@ export const appScript = String.raw`
 
   function registerForm() {
     return '<form id="register-form" class="form-grid">' +
-      '<div class="two-col"><div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="24" required></div><div class="field"><label>邮箱</label><input name="email" type="email" autocomplete="email" required></div></div>' +
+      '<div class="two-col"><div class="field"><label>昵称</label><input name="username" minlength="2" maxlength="15" required></div><div class="field"><label>邮箱</label><input name="email" type="email" autocomplete="email" required></div></div>' +
       '<div class="field"><label>密码</label><input name="password" type="password" minlength="10" autocomplete="new-password" required><span class="field-hint">至少 10 位，包含大小写字母、数字、符号中的 3 类。</span></div>' +
       '<div class="field"><label>管理员邀请码</label><input name="inviteCode" placeholder="普通用户可留空"></div>' +
       '<button class="primary-button" type="submit">' + icon("plus") + '<span>注册</span></button>' +
