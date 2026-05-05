@@ -191,6 +191,7 @@ const REGISTER_IP_COOLDOWN_SECONDS = 5 * 60;
 const CONTENT_WRITE_COOLDOWN_SECONDS = 30;
 const COMMENT_WRITE_COOLDOWN_SECONDS = 5;
 const SUBMISSION_WRITE_COOLDOWN_SECONDS = 30;
+const POST_VIEW_COOLDOWN_SECONDS = 6 * 60 * 60;
 const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
 const LOGIN_LOCK_SECONDS = 15 * 60;
 const LOGIN_EMAIL_LOCK_THRESHOLD = 5;
@@ -736,9 +737,14 @@ app.get("/api/posts/hot", async (c) => {
       EXISTS(SELECT 1 FROM post_likes mine WHERE mine.post_id = p.id AND mine.subject_type = ? AND mine.subject_id = ?) AS liked_by_me,
       COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags,
       (
-        COALESCE(p.view_count, 0)
-        + COALESCE((SELECT COUNT(*) FROM post_likes pl2 WHERE pl2.post_id = p.id), 0) * 5
-        + COALESCE((SELECT COUNT(*) FROM comments cm2 WHERE cm2.post_id = p.id AND cm2.status = 'published'), 0) * 4
+        MIN(COALESCE(p.view_count, 0), 80) * 0.35
+        + COALESCE((SELECT COUNT(*) FROM post_likes pl2 WHERE pl2.post_id = p.id), 0) * 12
+        + COALESCE((SELECT COUNT(*) FROM comments cm2 WHERE cm2.post_id = p.id AND cm2.status = 'published'), 0) * 9
+        + CASE
+            WHEN julianday(p.created_at) >= julianday('now', '-24 hours') THEN 18
+            WHEN julianday(p.created_at) >= julianday('now', '-7 days') THEN 8
+            ELSE 0
+          END
       ) AS hot_score
     FROM posts p
     JOIN users u ON u.id = p.author_id
@@ -782,13 +788,8 @@ app.get("/api/posts/:slug", async (c) => {
     return c.json({ error: "帖子不存在" }, 404);
   }
 
-  row.view_count = Number(row.view_count ?? 0) + 1;
-  c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE posts SET view_count = view_count + 1 WHERE id = ?")
-    .bind(String(row.id))
-    .run()
-    .catch((error) => {
-      console.error(JSON.stringify({ level: "warn", message: "view count update failed", error: String(error), postId: String(row.id) }));
-    }));
+  const countedView = await countPostViewOnce(c, String(row.id));
+  if (countedView) row.view_count = Number(row.view_count ?? 0) + 1;
 
   const comments = await c.env.DB.prepare(`
     SELECT cm.id, cm.content, cm.parent_id, cm.created_at, cm.updated_at, cm.visitor_id, u.username AS author_name
@@ -2285,6 +2286,33 @@ async function setCooldown(db: D1Database, bucket: string, subject: string, seco
     ON CONFLICT(bucket, subject)
     DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at
   `).bind(bucket, subject, expiresAt, now.toISOString(), now.toISOString()).run();
+}
+
+async function claimCooldownSlot(db: D1Database, bucket: string, subject: string, seconds: number): Promise<boolean> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const expiresAt = new Date(now.getTime() + seconds * 1000).toISOString();
+  const result = await db.prepare(`
+    INSERT INTO rate_cooldowns (bucket, subject, expires_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(bucket, subject)
+    DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at
+    WHERE rate_cooldowns.expires_at <= ?
+  `).bind(bucket, subject, expiresAt, nowIso, nowIso, nowIso).run();
+  return Number(result.meta?.changes ?? 0) > 0;
+}
+
+async function countPostViewOnce(c: AppContext, postId: string): Promise<boolean> {
+  const subject = `${postId}:${ipSubject(c)}`;
+  const counted = await claimCooldownSlot(c.env.DB, "post_view_ip", subject, POST_VIEW_COOLDOWN_SECONDS);
+  if (!counted) return false;
+  c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE posts SET view_count = view_count + 1 WHERE id = ?")
+    .bind(postId)
+    .run()
+    .catch((error) => {
+      console.error(JSON.stringify({ level: "warn", message: "view count update failed", error: String(error), postId }));
+    }));
+  return true;
 }
 
 function rateLimitedResponse(c: AppContext, message: string, retryAfterSeconds: number): Response {

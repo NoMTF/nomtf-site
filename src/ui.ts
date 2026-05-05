@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260505-short-comment-name";
+export const ASSET_VERSION = "20260505-hot-admin-mobile-search";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
@@ -1836,7 +1836,7 @@ svg {
   }
 
   .searchbar-secondary {
-    display: none;
+    display: flex;
   }
 
   .searchbar input {
@@ -2554,8 +2554,9 @@ export const appScript = String.raw`
     comments: [],
     admin: null,
     adminUi: {
-      postQuery: "",
-      commentQuery: ""
+      contentQuery: "",
+      userQuery: "",
+      permissionQuery: ""
     },
     search: {
       open: false,
@@ -3343,8 +3344,7 @@ export const appScript = String.raw`
     app.innerHTML =
       '<section class="admin-grid">' +
         renderAdminOverview() +
-        renderAdminPosts() +
-        renderAdminComments() +
+        renderAdminContentManagement() +
         renderAdminUsers() +
         renderAdminPermissions() +
       '</section>';
@@ -3373,6 +3373,35 @@ export const appScript = String.raw`
 
   function adminStat(value, label) {
     return '<div class="admin-stat"><strong>' + esc(String(value)) + '</strong><span>' + esc(label) + '</span></div>';
+  }
+
+  function renderAdminContentManagement() {
+    var query = state.adminUi.contentQuery || "";
+    var posts = filterAdminPosts(state.admin.posts || [], query);
+    var comments = filterAdminComments(state.admin.comments || [], query);
+    var visiblePosts = posts.slice(0, 5);
+    var foldedPosts = posts.slice(5);
+    var commentGroups = groupAdminComments(comments);
+    return '<section class="page-section admin-section">' +
+      '<div class="admin-section-head">' +
+        '<div><h2 class="section-title">内容管理</h2><p class="admin-subline">帖子和评论统一管理；匹配 ' + esc(String(posts.length)) + ' 篇帖子 / ' + esc(String(comments.length)) + ' 条评论。</p></div>' +
+        '<div class="admin-tools"><input class="admin-search" data-admin-filter="content" type="search" placeholder="搜索帖子、评论、作者、状态、分类" value="' + escAttr(query) + '"></div>' +
+      '</div>' +
+      '<div class="admin-comment-groups">' +
+        '<details class="admin-comment-group" open><summary><span class="admin-comment-title"><span>帖子</span><span class="status-pill">' + esc(String(posts.length)) + '</span></span></summary>' +
+          (posts.length ? '<div class="table">' + visiblePosts.map(adminPostRow).join("") + '</div>' : '<div class="empty-state">没有匹配的帖子。</div>') +
+          (foldedPosts.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(foldedPosts.length)) + ' 篇帖子</summary><div class="table">' + foldedPosts.map(adminPostRow).join("") + '</div></details>' : '') +
+        '</details>' +
+        '<details class="admin-comment-group"><summary><span class="admin-comment-title"><span>评论</span><span class="status-pill">' + esc(String(comments.length)) + '</span></span></summary>' +
+          (commentGroups.length ? '<div class="admin-comment-groups">' + commentGroups.map(function (group, index) {
+            return '<details class="admin-comment-group" ' + (query && index < 5 ? 'open' : '') + '>' +
+              '<summary><span class="admin-comment-title"><span>' + esc(group.title) + '</span><span class="status-pill">' + esc(String(group.comments.length)) + '</span></span></summary>' +
+              '<div class="table">' + group.comments.map(adminCommentRow).join("") + '</div>' +
+            '</details>';
+          }).join("") + '</div>' : '<div class="empty-state">没有匹配的评论。</div>') +
+        '</details>' +
+      '</div>' +
+    '</section>';
   }
 
   function renderAdminPosts() {
@@ -3482,6 +3511,25 @@ export const appScript = String.raw`
     });
   }
 
+  function filterAdminUsers(users, query) {
+    var needle = normalizeAdminQuery(query);
+    if (!needle) return users;
+    return users.filter(function (user) {
+      var ipText = (user.ip_previews || []).map(function (item) {
+        return [item.label, item.ip, item.country, item.detail, item.city, item.region].join(" ");
+      }).join(" ");
+      return normalizeAdminQuery([user.username, user.email, user.role, user.status, user.last_ip, ipText].join(" ")).indexOf(needle) >= 0;
+    });
+  }
+
+  function filterAdminPermissions(permissions, query) {
+    var needle = normalizeAdminQuery(query);
+    if (!needle) return permissions;
+    return permissions.filter(function (p) {
+      return normalizeAdminQuery([p.kind, p.subject, p.level, p.reason, p.created_by_name].join(" ")).indexOf(needle) >= 0;
+    });
+  }
+
   function groupAdminComments(comments) {
     var map = {};
     var groups = [];
@@ -3501,23 +3549,35 @@ export const appScript = String.raw`
   }
 
   function renderAdminUsers() {
-    return '<section class="page-section admin-section"><h2 class="section-title">用户</h2><div class="table">' +
-      state.admin.users.map(function (u) {
-        return '<div class="table-row users">' +
-          '<div class="admin-user-main"><strong>' + esc(u.username) + '</strong><span class="admin-subline">' + esc(u.email) + '</span></div>' +
-          renderAdminUserIps(u) +
-          '<span class="admin-subline">' + esc(u.session_count || 0) + ' 个会话</span>' +
-          '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
-          '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
-          '<div class="table-actions">' +
-            '<button class="danger-button" data-action="admin-ban-user" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban人</span></button>' +
-            '<button class="danger-button" data-action="admin-ban-ip" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban IP</span></button>' +
-            '<button class="ghost-button" data-action="admin-edit-user" data-id="' + escAttr(u.id) + '">' + icon("doc") + '<span>编辑</span></button>' +
-            '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
-            '<button class="danger-button" data-action="admin-delete-user" data-id="' + escAttr(u.id) + '">' + icon("trash") + '<span>删除</span></button>' +
-          '</div>' +
-        '</div>';
-      }).join("") + '</div></section>';
+    var query = state.adminUi.userQuery || "";
+    var users = filterAdminUsers(state.admin.users || [], query);
+    var visible = users.slice(0, 5);
+    var folded = users.slice(5);
+    return '<section class="page-section admin-section">' +
+      '<div class="admin-section-head">' +
+        '<div><h2 class="section-title">用户</h2><p class="admin-subline">匹配 ' + esc(String(users.length)) + ' 个用户，先显示前 5 个。</p></div>' +
+        '<div class="admin-tools"><input class="admin-search" data-admin-filter="users" type="search" placeholder="搜索用户名、邮箱、IP、地区、状态" value="' + escAttr(query) + '"></div>' +
+      '</div>' +
+      (users.length ? '<div class="table">' + visible.map(adminUserRow).join("") + '</div>' : '<div class="empty-state">没有匹配的用户。</div>') +
+      (folded.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(folded.length)) + ' 个用户</summary><div class="table">' + folded.map(adminUserRow).join("") + '</div></details>' : '') +
+    '</section>';
+  }
+
+  function adminUserRow(u) {
+    return '<div class="table-row users">' +
+      '<div class="admin-user-main"><strong>' + esc(u.username) + '</strong><span class="admin-subline">' + esc(u.email) + '</span></div>' +
+      renderAdminUserIps(u) +
+      '<span class="admin-subline">' + esc(u.session_count || 0) + ' 个会话</span>' +
+      '<select data-action="user-role" data-id="' + escAttr(u.id) + '"><option value="user" ' + selected(u.role, "user") + '>user</option><option value="admin" ' + selected(u.role, "admin") + '>admin</option></select>' +
+      '<select data-action="user-status" data-id="' + escAttr(u.id) + '"><option value="active" ' + selected(u.status, "active") + '>active</option><option value="muted" ' + selected(u.status, "muted") + '>muted</option><option value="banned" ' + selected(u.status, "banned") + '>banned</option></select>' +
+      '<div class="table-actions">' +
+        '<button class="danger-button" data-action="admin-ban-user" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban人</span></button>' +
+        '<button class="danger-button" data-action="admin-ban-ip" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>Ban IP</span></button>' +
+        '<button class="ghost-button" data-action="admin-edit-user" data-id="' + escAttr(u.id) + '">' + icon("doc") + '<span>编辑</span></button>' +
+        '<button class="ghost-button" data-action="admin-revoke-sessions" data-id="' + escAttr(u.id) + '">' + icon("shield") + '<span>踢下线</span></button>' +
+        '<button class="danger-button" data-action="admin-delete-user" data-id="' + escAttr(u.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+      '</div>' +
+    '</div>';
   }
 
   function renderAdminUserIps(user) {
@@ -3548,7 +3608,15 @@ export const appScript = String.raw`
   }
 
   function renderAdminPermissions() {
-    return '<section class="page-section admin-section"><h2 class="section-title">访客权限</h2>' +
+    var query = state.adminUi.permissionQuery || "";
+    var permissions = filterAdminPermissions(state.admin.permissions || [], query);
+    var visible = permissions.slice(0, 5);
+    var folded = permissions.slice(5);
+    return '<section class="page-section admin-section">' +
+      '<div class="admin-section-head">' +
+        '<div><h2 class="section-title">访客权限</h2><p class="admin-subline">匹配 ' + esc(String(permissions.length)) + ' 条规则，先显示前 5 条。</p></div>' +
+        '<div class="admin-tools"><input class="admin-search" data-admin-filter="permissions" type="search" placeholder="搜索 subject、原因、等级、类型" value="' + escAttr(query) + '"></div>' +
+      '</div>' +
       '<form id="permission-form" class="form-grid">' +
         '<div class="two-col">' +
           '<div class="field"><label>类型</label><select name="kind"><option value="visitor">visitor</option><option value="user">user</option><option value="ip_hash">ip_hash</option></select></div>' +
@@ -3558,16 +3626,19 @@ export const appScript = String.raw`
         '<div class="field"><label>原因</label><input name="reason" maxlength="240"></div>' +
         '<button class="primary-button" type="submit">' + icon("shield") + '<span>添加规则</span></button>' +
       '</form>' +
-      '<div class="table">' +
-      state.admin.permissions.map(function (p) {
-        return '<div class="table-row permissions">' +
-          '<span class="status-pill">' + esc(p.kind) + '</span>' +
-          '<code>' + esc(p.subject) + '</code>' +
-          '<span>' + esc(p.level) + '</span>' +
-          '<span>' + esc(p.reason || "") + '</span>' +
-          '<button class="danger-button" data-action="admin-delete-permission" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button>' +
-        '</div>';
-      }).join("") + '</div></section>';
+      (permissions.length ? '<div class="table">' + visible.map(adminPermissionRow).join("") + '</div>' : '<div class="empty-state">没有匹配的权限规则。</div>') +
+      (folded.length ? '<details class="admin-fold"><summary>展开剩余 ' + esc(String(folded.length)) + ' 条规则</summary><div class="table">' + folded.map(adminPermissionRow).join("") + '</div></details>' : '') +
+    '</section>';
+  }
+
+  function adminPermissionRow(p) {
+    return '<div class="table-row permissions">' +
+      '<span class="status-pill">' + esc(p.kind) + '</span>' +
+      '<code>' + esc(p.subject) + '</code>' +
+      '<span>' + esc(p.level) + '</span>' +
+      '<span>' + esc(p.reason || "") + '</span>' +
+      '<button class="danger-button" data-action="admin-delete-permission" data-id="' + escAttr(p.id) + '">' + icon("trash") + '<span>删除</span></button>' +
+    '</div>';
   }
 
   async function onClick(event) {
@@ -4425,8 +4496,9 @@ export const appScript = String.raw`
     if (adminFilter && state.admin) {
       var kind = adminFilter.getAttribute("data-admin-filter");
       var value = String(adminFilter.value || "");
-      if (kind === "posts") state.adminUi.postQuery = value;
-      if (kind === "comments") state.adminUi.commentQuery = value;
+      if (kind === "content") state.adminUi.contentQuery = value;
+      if (kind === "users") state.adminUi.userQuery = value;
+      if (kind === "permissions") state.adminUi.permissionQuery = value;
       renderAdmin();
       requestAnimationFrame(function () {
         var next = document.querySelector('[data-admin-filter="' + kind + '"]');
