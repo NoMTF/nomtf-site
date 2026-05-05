@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260505-admin-post-comments";
+export const ASSET_VERSION = "20260505-image-placeholders";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 
@@ -3179,7 +3179,7 @@ export const appScript = String.raw`
           (post.nsfw ? '<span class="nsfw-pill">NSFW</span>' : '') +
         '</div>' +
         '<h2 class="post-title">' + esc(post.title) + '</h2>' +
-        '<p class="post-summary">' + esc(post.summary || excerpt(post.content)) + '</p>' +
+        '<p class="post-summary">' + esc(excerpt(post.summary || post.content)) + '</p>' +
         '<div class="tag-list">' + post.tags.map(tagButton).join("") +
           '<span class="mini-stat">' + icon("eye") + '<span class="mini-stat-value">' + esc(String(post.viewCount || 0)) + '</span></span>' +
           '<span class="mini-stat">' + icon("heart") + '<span class="mini-stat-value">' + esc(String(post.likeCount)) + '</span></span>' +
@@ -5465,8 +5465,16 @@ export const appScript = String.raw`
 
   function excerpt(value, max) {
     max = max || 110;
-    var text = String(value || "").replace(/\s+/g, " ").trim();
+    var text = imagePlaceholderText(value).replace(/\s+/g, " ").trim();
     return text.length > max ? text.slice(0, max - 1) + "..." : text;
+  }
+
+  function imagePlaceholderText(value) {
+    var count = 0;
+    return String(value || "").replace(/!\[[^\]]*]\([^)]+\)/g, function () {
+      count += 1;
+      return "（图片" + count + "）";
+    });
   }
 
   function dateText(value) {

@@ -727,6 +727,27 @@ app.get("/api/posts/hot", async (c) => {
   const subjectType = user ? "user" : "visitor";
   const subjectId = user?.id ?? visitorId;
   const limit = Math.min(10, Math.max(3, Number(c.req.query("limit") ?? 6)));
+  const hotResetAt = await getSettingValue(c.env.DB, "hot_reset_at");
+  const likeScoreFilter = hotResetAt ? " AND pl2.created_at >= ?" : "";
+  const commentScoreFilter = hotResetAt ? " AND cm2.created_at >= ?" : "";
+  const freshnessScore = hotResetAt
+    ? "CASE WHEN p.created_at >= ? THEN 18 ELSE 0 END"
+    : `CASE
+            WHEN julianday(p.created_at) >= julianday('now', '-24 hours') THEN 18
+            WHEN julianday(p.created_at) >= julianday('now', '-7 days') THEN 8
+            ELSE 0
+          END`;
+  const hotResetFilter = hotResetAt
+    ? `AND (
+        COALESCE(p.view_count, 0) > 0
+        OR EXISTS(SELECT 1 FROM post_likes recent_like WHERE recent_like.post_id = p.id AND recent_like.created_at >= ?)
+        OR EXISTS(SELECT 1 FROM comments recent_comment WHERE recent_comment.post_id = p.id AND recent_comment.status = 'published' AND recent_comment.created_at >= ?)
+        OR p.created_at >= ?
+      )`
+    : "";
+  const hotParams = hotResetAt
+    ? [subjectType, subjectId, hotResetAt, hotResetAt, hotResetAt, hotResetAt, hotResetAt, hotResetAt, limit]
+    : [subjectType, subjectId, limit];
   const result = await c.env.DB.prepare(`
     SELECT
       p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
@@ -738,20 +759,17 @@ app.get("/api/posts/hot", async (c) => {
       COALESCE((SELECT group_concat(t.name, '|') FROM post_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.post_id = p.id), '') AS tags,
       (
         MIN(COALESCE(p.view_count, 0), 80) * 0.35
-        + COALESCE((SELECT COUNT(*) FROM post_likes pl2 WHERE pl2.post_id = p.id), 0) * 12
-        + COALESCE((SELECT COUNT(*) FROM comments cm2 WHERE cm2.post_id = p.id AND cm2.status = 'published'), 0) * 9
-        + CASE
-            WHEN julianday(p.created_at) >= julianday('now', '-24 hours') THEN 18
-            WHEN julianday(p.created_at) >= julianday('now', '-7 days') THEN 8
-            ELSE 0
-          END
+        + COALESCE((SELECT COUNT(*) FROM post_likes pl2 WHERE pl2.post_id = p.id${likeScoreFilter}), 0) * 12
+        + COALESCE((SELECT COUNT(*) FROM comments cm2 WHERE cm2.post_id = p.id AND cm2.status = 'published'${commentScoreFilter}), 0) * 9
+        + ${freshnessScore}
       ) AS hot_score
     FROM posts p
     JOIN users u ON u.id = p.author_id
     WHERE p.status = 'published'
+    ${hotResetFilter}
     ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, hot_score DESC, p.created_at DESC
     LIMIT ?
-  `).bind(subjectType, subjectId, limit).all<Record<string, unknown>>();
+  `).bind(...hotParams).all<Record<string, unknown>>();
 
   return c.json({ posts: (result.results ?? []).map(normalizePostRow) });
 });
@@ -2501,11 +2519,16 @@ async function readJson(c: AppContext): Promise<Record<string, unknown>> {
   }
 }
 
+async function getSettingValue(db: D1Database, key: string): Promise<string> {
+  const row = await db.prepare("SELECT value FROM site_settings WHERE key = ?").bind(key).first<{ value: string }>();
+  return String(row?.value ?? "");
+}
+
 async function getUiConfig(db: D1Database): Promise<UiConfig> {
-  const row = await db.prepare("SELECT value FROM site_settings WHERE key = 'ui_config'").first<{ value: string }>();
-  if (!row?.value) return DEFAULT_UI_CONFIG;
+  const value = await getSettingValue(db, "ui_config");
+  if (!value) return DEFAULT_UI_CONFIG;
   try {
-    return sanitizeUiConfig(JSON.parse(row.value));
+    return sanitizeUiConfig(JSON.parse(value));
   } catch {
     return DEFAULT_UI_CONFIG;
   }
@@ -3408,7 +3431,7 @@ function renderStaticPostHtml(row: Record<string, unknown>): string {
     ${cover}
     <h1>${title}</h1>
     <p><strong>作者：</strong>${author} <strong>分类：</strong>${category}</p>
-    ${row.summary ? `<p>${htmlEscape(row.summary)}</p>` : ""}
+    ${row.summary ? `<p>${htmlEscape(previewText(row.summary, 240))}</p>` : ""}
     ${rating}
     <div class="content">${staticParagraphs(row.content)}</div>
     ${twitter}
@@ -3449,12 +3472,24 @@ function staticParagraphs(value: unknown): string {
 }
 
 function seoDescription(value: unknown): string {
-  const text = String(value ?? "")
-    .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
+  const text = imagePlaceholderText(value)
     .replace(/[*_`>#\[\]()]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return cleanText(text || SITE_DESCRIPTION, 150);
+}
+
+function previewText(value: unknown, max = 150): string {
+  const text = imagePlaceholderText(value).replace(/\s+/g, " ").trim();
+  return cleanText(text, max);
+}
+
+function imagePlaceholderText(value: unknown): string {
+  let count = 0;
+  return String(value ?? "").replace(/!\[[^\]]*]\([^)]+\)/g, () => {
+    count += 1;
+    return `（图片${count}）`;
+  });
 }
 
 function htmlEscape(value: unknown): string {
