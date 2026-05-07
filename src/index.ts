@@ -273,6 +273,26 @@ app.get("/favicon.ico", async (c) => {
   return serveMediaObject(c, "site/search-icon-48.png", "image/png");
 });
 
+app.get("/favicon-48x48.png", async (c) => {
+  return serveMediaObject(c, "site/search-icon-48.png", "image/png");
+});
+
+app.get("/favicon-96x96.png", async (c) => {
+  return serveMediaObject(c, "site/search-icon-96.png", "image/png");
+});
+
+app.get("/apple-touch-icon.png", async (c) => {
+  return serveMediaObject(c, "site/search-icon-180.png", "image/png");
+});
+
+app.get("/icon-192.png", async (c) => {
+  return serveMediaObject(c, "site/search-icon-192.png", "image/png");
+});
+
+app.get("/icon-512.png", async (c) => {
+  return serveMediaObject(c, "site/search-icon-512.png", "image/png");
+});
+
 app.get("/site.webmanifest", (c) => {
   const manifest = {
     name: "NoMTF 不药娘网",
@@ -284,8 +304,8 @@ app.get("/site.webmanifest", (c) => {
     background_color: "#f8fbff",
     theme_color: "#69cbed",
     icons: [
-      { src: `/media/site/search-icon-192.png?v=${ASSET_VERSION}`, sizes: "192x192", type: "image/png" },
-      { src: `/media/site/search-icon-512.png?v=${ASSET_VERSION}`, sizes: "512x512", type: "image/png" }
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" }
     ]
   };
   return new Response(JSON.stringify(manifest), {
@@ -3579,7 +3599,7 @@ function buildPostJsonLd(row: Record<string, unknown>, canonical: string, image?
     },
     mainEntityOfPage: canonical,
     url: canonical,
-    image: image ? [image] : [`${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}`],
+    image: image ? [image] : [`${SITE_ORIGIN}/icon-512.png`],
     datePublished: String(row.created_at ?? ""),
     dateModified: String(row.updated_at ?? row.created_at ?? "")
   };

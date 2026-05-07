@@ -1,6 +1,7 @@
 export const ASSET_VERSION = "20260505-image-placeholders";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
+const SITE_ICON_IMAGE = `${SITE_ORIGIN}/icon-512.png`;
 
 type PageMeta = {
   title?: string;
@@ -16,7 +17,7 @@ export function renderPage(meta: PageMeta = {}): string {
   const title = escapeMeta(meta.title || "NoMTF 不药娘网");
   const description = escapeMeta(meta.description || SITE_DESCRIPTION);
   const canonical = escapeMeta(meta.canonical || `${SITE_ORIGIN}/`);
-  const image = escapeMeta(meta.image || `${SITE_ORIGIN}/media/site/search-icon-512.png?v=${ASSET_VERSION}`);
+  const image = escapeMeta(meta.image || SITE_ICON_IMAGE);
   const type = escapeMeta(meta.type || "website");
   const staticHtml = meta.staticHtml || defaultStaticHtml();
   const jsonLd = meta.jsonLd ? `<script type="application/ld+json">${safeJsonLd(meta.jsonLd)}</script>` : "";
@@ -30,10 +31,11 @@ export function renderPage(meta: PageMeta = {}): string {
     <meta name="keywords" content="NoMTF, nomtf, nomtf.com, 不药娘网, 不药娘, 独立评级网站, 娱乐评级">
     <meta name="robots" content="index,follow">
     <link rel="canonical" href="${canonical}">
-    <link rel="icon" type="image/png" sizes="48x48" href="/media/site/search-icon-48.png?v=${ASSET_VERSION}">
-    <link rel="icon" type="image/png" sizes="96x96" href="/media/site/search-icon-96.png?v=${ASSET_VERSION}">
-    <link rel="apple-touch-icon" sizes="180x180" href="/media/site/search-icon-180.png?v=${ASSET_VERSION}">
-    <link rel="manifest" href="/site.webmanifest?v=${ASSET_VERSION}">
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+    <link rel="shortcut icon" type="image/png" href="/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/site.webmanifest">
     <meta property="og:site_name" content="NoMTF 不药娘网">
     <meta property="og:title" content="${title}">
     <meta property="og:description" content="${description}">
