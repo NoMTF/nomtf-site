@@ -233,7 +233,13 @@ app.onError((err, c) => {
 
 app.use("*", enforceHttps);
 app.use("*", applySecurityHeaders);
-app.use("*", bindRequestContext);
+app.use("*", async (c, next) => {
+  if (isStaticPublicPath(c.req.path)) {
+    await next();
+    return;
+  }
+  await bindRequestContext(c, next);
+});
 app.use("/api/*", async (c, next) => {
   if (!isSafeMethod(c.req.method) && !isSameOrigin(c) && !isExternalWebhookRequest(c)) {
     return c.json({ error: "跨站请求被拒绝" }, 403);
@@ -255,7 +261,7 @@ app.get("/assets/app.css", (c) => {
   return new Response(styles, {
     headers: {
       "Content-Type": "text/css; charset=utf-8",
-      "Cache-Control": "no-store"
+      "Cache-Control": "public, max-age=31536000, immutable"
     }
   });
 });
@@ -264,7 +270,7 @@ app.get("/assets/app.js", (c) => {
   return new Response(appScript, {
     headers: {
       "Content-Type": "text/javascript; charset=utf-8",
-      "Cache-Control": "no-store"
+      "Cache-Control": "public, max-age=31536000, immutable"
     }
   });
 });
@@ -700,7 +706,7 @@ app.get("/api/posts", async (c) => {
 
   const sql = `
     SELECT
-      p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
+      p.id, p.title, p.slug, p.summary, substr(p.content, 1, 360) AS content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       ${searchPlan ? `${searchPlan.scoreSql} AS search_score,` : ""}
@@ -763,7 +769,7 @@ app.get("/api/posts/hot", async (c) => {
     : [subjectType, subjectId, limit];
   const result = await c.env.DB.prepare(`
     SELECT
-      p.id, p.title, p.slug, p.summary, p.content, p.final_rating, p.rating_reason, p.twitter_ref,
+      p.id, p.title, p.slug, p.summary, substr(p.content, 1, 360) AS content, p.final_rating, p.rating_reason, p.twitter_ref,
       p.category, p.pinned_at, p.hazard_level, p.nsfw, p.cover_key, p.status, COALESCE(p.view_count, 0) AS view_count, p.created_at, p.updated_at,
       COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name,
       COALESCE((SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id), 0) AS like_count,
@@ -1710,7 +1716,8 @@ app.get("/post/:slug", async (c) => {
     image,
     type: "article",
     staticHtml: renderStaticPostHtml(row),
-    jsonLd: buildPostJsonLd(row, canonical, image)
+    jsonLd: buildPostJsonLd(row, canonical, image),
+    preloadHero: false
   }), {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
@@ -1810,6 +1817,21 @@ async function bindRequestContext(c: AppContext, next: Next) {
   }
 
   await next();
+}
+
+function isStaticPublicPath(path: string): boolean {
+  return path === "/assets/app.css"
+    || path === "/assets/app.js"
+    || path === "/favicon.ico"
+    || path === "/favicon-48x48.png"
+    || path === "/favicon-96x96.png"
+    || path === "/apple-touch-icon.png"
+    || path === "/icon-192.png"
+    || path === "/icon-512.png"
+    || path === "/site.webmanifest"
+    || path === "/robots.txt"
+    || path === `/${INDEXNOW_KEY}.txt`
+    || path.startsWith("/media/site/");
 }
 
 function clientIpFromRequest(c: AppContext): string {

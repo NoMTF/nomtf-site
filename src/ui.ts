@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260524-initial-shell";
+export const ASSET_VERSION = "20260524-perf-framework";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 const SITE_ICON_IMAGE = `${SITE_ORIGIN}/icon-512.png`;
@@ -11,6 +11,7 @@ type PageMeta = {
   type?: string;
   staticHtml?: string;
   jsonLd?: unknown;
+  preloadHero?: boolean;
 };
 
 export function renderPage(meta: PageMeta = {}): string {
@@ -21,6 +22,9 @@ export function renderPage(meta: PageMeta = {}): string {
   const type = escapeMeta(meta.type || "website");
   const staticHtml = meta.staticHtml || defaultStaticHtml();
   const jsonLd = meta.jsonLd ? `<script type="application/ld+json">${safeJsonLd(meta.jsonLd)}</script>` : "";
+  const heroPreload = meta.preloadHero !== false
+    ? '<link rel="preload" as="image" href="/media/site/banner.jpg?v=20260503-media" fetchpriority="high">'
+    : "";
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -46,6 +50,7 @@ export function renderPage(meta: PageMeta = {}): string {
     <meta name="twitter:title" content="${title}">
     <meta name="twitter:description" content="${description}">
     <meta name="twitter:image" content="${image}">
+    ${heroPreload}
     <link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}">
     ${jsonLd}
     <script src="/assets/app.js?v=${ASSET_VERSION}" defer></script>
@@ -70,7 +75,7 @@ function defaultStaticHtml(): string {
   return '<section class="hero">' +
     '<div class="hero-copy">' +
       '<h1 class="sr-only">NoMTF 不药娘网</h1>' +
-      '<div class="hero-banner"><img src="/media/site/banner.jpg?v=20260503-media" alt="NoMTF 不药娘网"></div>' +
+      '<div class="hero-banner"><img src="/media/site/banner.jpg?v=20260503-media" alt="NoMTF 不药娘网" fetchpriority="high" decoding="async"></div>' +
       '<p class="hero-lede">把物品、现象和网络梗放进娱乐评级表，按“对社会的危害等级”做 1-5 级荒诞归档。本页正在加载最新内容。</p>' +
       '<div class="hero-actions">' +
         '<button class="primary-button" type="button" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg><span>发布评级</span></button>' +
@@ -80,11 +85,11 @@ function defaultStaticHtml(): string {
     '<aside class="rating-board">' +
       '<h2>危害等级</h2>' +
       '<div class="scale-list">' +
-        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-1.png?v=20260503-media" alt="1级"></span><span class="scale-copy"><strong>轻微整活</strong><span>几乎无害，适合拿来开场</span></span></div>' +
-        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-2.png?v=20260503-media" alt="2级"></span><span class="scale-copy"><strong>低度扰动</strong><span>可能让人多看两眼</span></span></div>' +
-        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-3.png?v=20260503-media" alt="3级"></span><span class="scale-copy"><strong>中度混乱</strong><span>开始影响场面秩序</span></span></div>' +
-        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-4.png?v=20260503-media" alt="4级"></span><span class="scale-copy"><strong>高度警报</strong><span>建议谨慎围观</span></span></div>' +
-        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-5.png?v=20260503-media" alt="5级"></span><span class="scale-copy"><strong>终极危害</strong><span>只适合娱乐性封存</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-1.png?v=20260503-media" alt="1级" loading="lazy" decoding="async"></span><span class="scale-copy"><strong>轻微整活</strong><span>几乎无害，适合拿来开场</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-2.png?v=20260503-media" alt="2级" loading="lazy" decoding="async"></span><span class="scale-copy"><strong>低度扰动</strong><span>可能让人多看两眼</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-3.png?v=20260503-media" alt="3级" loading="lazy" decoding="async"></span><span class="scale-copy"><strong>中度混乱</strong><span>开始影响场面秩序</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-4.png?v=20260503-media" alt="4级" loading="lazy" decoding="async"></span><span class="scale-copy"><strong>高度警报</strong><span>建议谨慎围观</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-5.png?v=20260503-media" alt="5级" loading="lazy" decoding="async"></span><span class="scale-copy"><strong>终极危害</strong><span>只适合娱乐性封存</span></span></div>' +
       '</div>' +
     '</aside>' +
   '</section>' +
@@ -2695,12 +2700,16 @@ export const appScript = String.raw`
     syncEditorChrome();
     showTermsIfNeeded();
     try {
-      var me = await api("/api/me");
+      var boot = await Promise.all([
+        api("/api/me"),
+        api("/api/site-settings").catch(function () { return { ui: null }; })
+      ]);
+      var me = boot[0];
+      var settings = boot[1];
       state.user = me.user;
       state.visitorId = me.visitorId;
       state.permission = me.permission;
       state.termsVersion = me.termsVersion || state.termsVersion;
-      var settings = await api("/api/site-settings");
       applyUiConfig(settings.ui);
       schedulePreciseLocation("init", false);
     } catch (error) {
@@ -2993,14 +3002,14 @@ export const appScript = String.raw`
     }
     if (!searching && category === "rating" && state.filters.level) params.set("level", state.filters.level);
     if (state.filters.tag) params.set("tag", state.filters.tag);
-    var data = await api("/api/posts?" + params.toString());
+    var postsRequest = api("/api/posts?" + params.toString());
+    var hotRequest = (!searching && !state.filters.level && !state.filters.tag)
+      ? api("/api/posts/hot?limit=5").catch(function () { return { posts: [] }; })
+      : Promise.resolve({ posts: [] });
+    var results = await Promise.all([postsRequest, hotRequest]);
+    var data = results[0];
     state.posts = data.posts || [];
-    try {
-      var hot = await api("/api/posts/hot?limit=5");
-      state.hotPosts = (hot.posts || []).slice(0, 5);
-    } catch (_) {
-      state.hotPosts = [];
-    }
+    state.hotPosts = ((results[1] && results[1].posts) || []).slice(0, 5);
   }
 
   async function loadPost(slug) {
@@ -3014,11 +3023,18 @@ export const appScript = String.raw`
       state.admin = null;
       return;
     }
-    var stats = await api("/api/admin/stats");
-    var posts = await api("/api/admin/posts");
-    var comments = await api("/api/admin/comments");
-    var permissions = isSuAdminUser(state.user) ? await api("/api/admin/permissions") : { permissions: [] };
-    var users = await api("/api/admin/users");
+    var results = await Promise.all([
+      api("/api/admin/stats"),
+      api("/api/admin/posts"),
+      api("/api/admin/comments"),
+      isSuAdminUser(state.user) ? api("/api/admin/permissions") : Promise.resolve({ permissions: [] }),
+      api("/api/admin/users")
+    ]);
+    var stats = results[0];
+    var posts = results[1];
+    var comments = results[2];
+    var permissions = results[3];
+    var users = results[4];
     state.admin = {
       stats: stats.stats || null,
       posts: posts.posts || [],
@@ -3045,7 +3061,7 @@ export const appScript = String.raw`
       '<section class="hero ' + (ratingPage ? "" : "hero-simple") + '">' +
         '<div class="hero-copy">' +
           '<h1 class="sr-only">NoMTF 不药娘网</h1>' +
-          '<div class="hero-banner"><img src="' + siteAssets.banner + '" alt="NoMTF 不药娘网"></div>' +
+          '<div class="hero-banner"><img src="' + siteAssets.banner + '" alt="NoMTF 不药娘网" fetchpriority="high" decoding="async"></div>' +
           '<p class="hero-lede">' + homeIntro(category) + '</p>' +
           '<div class="hero-actions">' +
             '<button class="primary-button" data-action="new-post">' + icon("plus") + '<span>' + (ratingPage ? '发布评级' : '发布内容') + '</span></button>' +
@@ -3221,7 +3237,7 @@ export const appScript = String.raw`
   function levelRow(key) {
     var item = levels[key];
     return '<button class="scale-row" data-action="filter-level" data-level="' + key + '">' +
-      '<span class="scale-thumb-wrap"><img class="scale-thumb" src="' + escAttr(siteAssets.levelCovers[key]) + '" alt="' + escAttr(item[0] + '级') + '"></span>' +
+      '<span class="scale-thumb-wrap"><img class="scale-thumb" src="' + escAttr(siteAssets.levelCovers[key]) + '" alt="' + escAttr(item[0] + '级') + '" loading="lazy" decoding="async"></span>' +
       '<span class="scale-copy"><strong>' + item[1] + '</strong><span>' + item[2] + '</span></span>' +
     '</button>';
   }
@@ -3261,7 +3277,7 @@ export const appScript = String.raw`
     var isRating = isRatingCategory(post.category);
     var coverUrl = post.coverUrl || (isRating ? defaultLevelCover(post.hazardLevel) : "");
     var cover = coverUrl
-      ? '<img class="' + (!post.coverUrl && isRating ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt="">'
+      ? '<img class="' + (!post.coverUrl && isRating ? 'default-level-cover' : '') + '" src="' + escAttr(coverUrl) + '" alt="" loading="lazy" decoding="async">'
       : '<div class="cover-fallback"><span class="status-pill">' + categoryText(post.category) + '</span></div>';
     return '<article class="post-card" data-action="open-post" data-slug="' + escAttr(post.slug) + '" role="link" tabindex="0">' +
       '<div class="post-cover">' + cover + '</div>' +
@@ -5514,7 +5530,14 @@ export const appScript = String.raw`
     }
     var response = await fetch(path, init);
     var text = await response.text();
-    var data = text ? JSON.parse(text) : {};
+    var data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = { error: response.ok ? "响应格式错误" : ("请求失败（HTTP " + response.status + "）") };
+      }
+    }
     if (!response.ok) throw new Error(data.error || "请求失败");
     return data;
   }
