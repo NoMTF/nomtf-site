@@ -59,7 +59,7 @@ export function renderPage(meta: PageMeta = {}): string {
       <footer class="site-footer">
         <span>NoMTF 不药娘网</span>
         <a href="https://t.me/NoMTF_bot" target="_blank" rel="noopener noreferrer">投稿机器人</a>
-        <a href="https://x.com/wenyutang1019" target="_blank" rel="noopener noreferrer">站长 Yuwen（@wenyutang1019）</a>
+        <a href="https://x.com/TransYuwen" target="_blank" rel="noopener noreferrer">站长 Yuwen（@TransYuwen）</a>
       </footer>
     </div>
   </body>
@@ -2684,6 +2684,16 @@ export const appScript = String.raw`
   }
 
   async function route() {
+    try {
+      await routeInner();
+    } catch (error) {
+      console.error(error);
+      toast(error && error.message ? error.message : "页面加载失败，请刷新重试");
+      renderRouteError();
+    }
+  }
+
+  async function routeInner() {
     closeImageViewer();
     var hash = location.hash || "#/";
     if (location.pathname.indexOf("/post/") === 0 && (!location.hash || location.hash === "#/")) {
@@ -2719,6 +2729,10 @@ export const appScript = String.raw`
       state.filters.q = "";
       state.filters.category = hash === "#/about" ? "about" : "talk";
       state.filters.level = "";
+      state.posts = [];
+      state.hotPosts = [];
+      renderHome();
+      syncEditorChrome();
       await loadPosts();
       renderHome();
       syncEditorChrome();
@@ -2735,6 +2749,9 @@ export const appScript = String.raw`
         return;
       }
       renderHeader();
+      state.posts = [];
+      renderSearchResults();
+      syncEditorChrome();
       await loadPosts();
       renderSearchResults();
       syncEditorChrome();
@@ -2762,8 +2779,21 @@ export const appScript = String.raw`
       state.filters.q = "";
       state.filters.category = state.filters.category || "rating";
     }
+    state.posts = [];
+    state.hotPosts = [];
+    renderHome();
+    syncEditorChrome();
     await loadPosts();
     renderHome();
+    syncEditorChrome();
+  }
+
+  function renderRouteError() {
+    renderHeader();
+    var app = document.getElementById("app");
+    if (app) {
+      app.innerHTML = '<div class="empty-state">页面加载失败了。请刷新重试，或稍后再打开。</div>';
+    }
     syncEditorChrome();
   }
 
