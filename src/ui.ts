@@ -1,4 +1,4 @@
-export const ASSET_VERSION = "20260505-image-placeholders";
+export const ASSET_VERSION = "20260524-initial-shell";
 export const SITE_DESCRIPTION = "不药娘网-一个独立的评级网站 切勿当真";
 export const SITE_ORIGIN = "https://nomtf.com";
 const SITE_ICON_IMAGE = `${SITE_ORIGIN}/icon-512.png`;
@@ -67,11 +67,35 @@ export function renderPage(meta: PageMeta = {}): string {
 }
 
 function defaultStaticHtml(): string {
-  return '<section class="page-section detail-article">' +
-    '<h1>NoMTF 不药娘网 - nomtf.com</h1>' +
-    '<p>NoMTF 不药娘网（nomtf.com）是一个独立的娱乐评级网站，中文名为不药娘网，内容切勿当真。</p>' +
-    '<p>网站关键词：NoMTF、nomtf、不药娘网、不药娘、独立评级网站、娱乐评级。</p>' +
-    '<p>本站内容仅供娱乐和讨论，不应被当作事实判断或现实行动依据。</p>' +
+  return '<section class="hero">' +
+    '<div class="hero-copy">' +
+      '<h1 class="sr-only">NoMTF 不药娘网</h1>' +
+      '<div class="hero-banner"><img src="/media/site/banner.jpg?v=20260503-media" alt="NoMTF 不药娘网"></div>' +
+      '<p class="hero-lede">把物品、现象和网络梗放进娱乐评级表，按“对社会的危害等级”做 1-5 级荒诞归档。本页正在加载最新内容。</p>' +
+      '<div class="hero-actions">' +
+        '<button class="primary-button" type="button" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg><span>发布评级</span></button>' +
+        '<button class="ghost-button" type="button" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h6"></path></svg><span>用户协议</span></button>' +
+      '</div>' +
+    '</div>' +
+    '<aside class="rating-board">' +
+      '<h2>危害等级</h2>' +
+      '<div class="scale-list">' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-1.png?v=20260503-media" alt="1级"></span><span class="scale-copy"><strong>轻微整活</strong><span>几乎无害，适合拿来开场</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-2.png?v=20260503-media" alt="2级"></span><span class="scale-copy"><strong>低度扰动</strong><span>可能让人多看两眼</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-3.png?v=20260503-media" alt="3级"></span><span class="scale-copy"><strong>中度混乱</strong><span>开始影响场面秩序</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-4.png?v=20260503-media" alt="4级"></span><span class="scale-copy"><strong>高度警报</strong><span>建议谨慎围观</span></span></div>' +
+        '<div class="scale-row"><span class="scale-thumb-wrap"><img class="scale-thumb" src="/media/site/level-5.png?v=20260503-media" alt="5级"></span><span class="scale-copy"><strong>终极危害</strong><span>只适合娱乐性封存</span></span></div>' +
+      '</div>' +
+    '</aside>' +
+  '</section>' +
+  '<section class="layout">' +
+    '<aside class="panel filters">' +
+      '<div class="filter-grid">' +
+        '<div class="filter-group"><label>分类</label><div class="segmented category-tabs"><button class="segment active" type="button" disabled>评级</button><button class="segment" type="button" disabled>关于页</button><button class="segment" type="button" disabled>杂谈页</button></div></div>' +
+        '<div class="filter-group"><label>等级筛选</label><div class="segmented"><button class="segment" type="button" disabled>1</button><button class="segment" type="button" disabled>2</button><button class="segment" type="button" disabled>3</button><button class="segment" type="button" disabled>4</button><button class="segment" type="button" disabled>5</button></div></div>' +
+      '</div>' +
+    '</aside>' +
+    '<div class="feed"><div class="empty-state">正在加载最新帖子...</div></div>' +
   '</section>';
 }
 
@@ -2667,6 +2691,8 @@ export const appScript = String.raw`
   async function init() {
     state.search.history = loadSearchHistory();
     renderHeader();
+    renderInitialRouteShell();
+    syncEditorChrome();
     showTermsIfNeeded();
     try {
       var me = await api("/api/me");
@@ -2681,6 +2707,24 @@ export const appScript = String.raw`
       toast(error.message);
     }
     await route();
+  }
+
+  function renderInitialRouteShell() {
+    var hash = location.hash || "#/";
+    if (location.pathname.indexOf("/post/") === 0 && (!location.hash || location.hash === "#/")) return;
+    if (hash.indexOf("#/post/") === 0 || hash === "#/admin" || hash === "#/new" || hash === "#/admin/editor") return;
+    if (hash.indexOf("#/search") === 0) {
+      state.filters.q = searchQueryFromHash(hash);
+      state.filters.level = "";
+      state.filters.tag = "";
+      state.filters.category = "rating";
+      if (state.filters.q) renderSearchResults();
+      return;
+    }
+    if (hash === "#/about" || hash === "#/talk") {
+      state.filters.category = hash === "#/about" ? "about" : "talk";
+    }
+    renderHome();
   }
 
   async function route() {

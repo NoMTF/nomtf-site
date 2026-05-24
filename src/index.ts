@@ -370,25 +370,15 @@ ${urls.map((item) => `  <url>
 });
 
 app.get("/", async (c) => {
-  const rows = await c.env.DB.prepare(`
-    SELECT p.title, p.slug, p.summary, p.content, p.category, p.updated_at, p.created_at,
-      COALESCE(NULLIF(p.submitter_name, ''), u.username) AS author_name
-    FROM posts p
-    JOIN users u ON u.id = p.author_id
-    WHERE p.status = 'published'
-    ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END, p.pinned_at DESC, p.created_at DESC
-    LIMIT 20
-  `).all<Record<string, unknown>>();
   return new Response(renderPage({
     title: "NoMTF 不药娘网 - nomtf.com 独立评级网站",
     description: "NoMTF 不药娘网（nomtf.com）是一个独立的娱乐评级网站，内容切勿当真。",
     canonical: `${SITE_ORIGIN}/`,
-    staticHtml: renderStaticHomeHtml(rows.results ?? []),
     jsonLd: buildWebsiteJsonLd()
   }), {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=300"
+      "Cache-Control": "no-store"
     }
   });
 });
@@ -3517,30 +3507,6 @@ function markdownLine(value: unknown): string {
 
 function postPublicUrl(slug: string): string {
   return `${SITE_ORIGIN}/post/${encodeURIComponent(slug)}`;
-}
-
-function renderStaticHomeHtml(rows: Record<string, unknown>[]): string {
-  const items = rows.map((row) => {
-    const title = htmlEscape(row.title);
-    const url = postPublicUrl(String(row.slug));
-    const summary = seoDescription(row.summary || row.content);
-    return `<article>
-      <h2><a href="${htmlAttr(url)}">${title}</a></h2>
-      <p>${htmlEscape(summary)}</p>
-      <p><strong>作者：</strong>${htmlEscape(row.author_name ?? "匿名")} <strong>分类：</strong>${htmlEscape(row.category ?? "rating")}</p>
-    </article>`;
-  }).join("");
-  return `<section class="page-section detail-article">
-    <h1>NoMTF 不药娘网 - nomtf.com</h1>
-    <p>NoMTF 不药娘网（nomtf.com）是一个独立的娱乐评级网站，中文名为不药娘网，内容切勿当真。</p>
-    <p>关键词：NoMTF、nomtf、nomtf.com、不药娘网、不药娘、独立评级网站、娱乐评级。</p>
-    <p>本站内容仅供娱乐和讨论，不应被当作事实判断或现实行动依据。</p>
-    <nav><a href="${SITE_ORIGIN}/sitemap.xml">Sitemap</a></nav>
-    <section>
-      <h2>最新内容</h2>
-      ${items || "<p>暂无已发布内容。</p>"}
-    </section>
-  </section>`;
 }
 
 function buildWebsiteJsonLd() {
